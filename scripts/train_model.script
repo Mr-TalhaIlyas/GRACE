@@ -1,0 +1,24 @@
+#!/bin/bash
+
+#SBATCH --job-name="Fold-5_A100"
+#SBATCH --ntasks=13
+#SBATCH --mem=64G
+#SBATCH --time=18:00:00
+#SBATCH --gres=gpu:A100:1
+#SBATCH --account=hl62
+#SBATCH --partition=m3n
+#SBATCH --qos=m3n
+#SBATCH --output=job_output_%j.txt
+
+# loading modules and activate environment
+module load anaconda/2020.07-Python3.8-gcc8
+export PROJECT=hl62
+export CONDA_ENVS=/scratch/$PROJECT/$USER/conda_envs
+source activate $CONDA_ENVS/pyt
+
+# directory
+cd /fs04/hl62/talha/mme/scripts/
+
+export FOLD_NUMBER=5  # Set the desired fold number
+# execute script
+python main.py

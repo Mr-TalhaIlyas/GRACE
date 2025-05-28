@@ -1,0 +1,16 @@
+# ignore all npy chkpt pth chkpt and logs dir
+*.npy
+*.chkpt
+*.pth
+logs/
+# ignore all .pyc files
+*.pyc
+# ignore all .pkl files
+*.pkl
+*.pdf
+*.jpg
+*.png
+
+*.txt
+*.mp4
+*.avi
