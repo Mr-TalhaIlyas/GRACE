@@ -412,7 +412,7 @@ class PoseCTGCN(nn.Module):
 
     def load_pretrained(self, checkpoint_path):
         print('Loading Pose-CTRGCN pretrianed chkpt...')
-        chkpt = torch.load(checkpoint_path)
+        chkpt = torch.load(checkpoint_path, map_location=torch.device('cpu'))
         try:
             # load pretrained
             del chkpt['state_dict']['backbone.A'] # delete the saved adjacency matrix 

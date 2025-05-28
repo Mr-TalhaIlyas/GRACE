@@ -11,6 +11,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+
+
 def run_inference_with_evaluation(model,
                                  dataloader: DataLoader,
                                  evaluator: SeizureEvaluator,
@@ -43,7 +45,7 @@ def run_inference_with_evaluation(model,
             lh = batch['lh'].permute(0,4,2,3,1).float().to(device, non_blocking=True)
             hrv = batch['hrv'].to(torch.float).to(device, non_blocking=True)
             
-            # Ground truth
+            # Ground truth - keep as scalar for event-level evaluation
             gt_labels = torch.argmax(batch['super_lbls'], dim=1).cpu().numpy()
             
             # Model inference
@@ -55,11 +57,12 @@ def run_inference_with_evaluation(model,
             for i in range(len(fusion_logits)):
                 all_window_predictions.append(fusion_logits[i])
                 all_window_probabilities.append(fusion_probs[i])
-                all_window_ground_truth.append(gt_labels[i])
+                all_window_ground_truth.append(gt_labels[i])  # Store as scalar
                 all_filenames.append(batch['filename'][i])
                 
-                # Calculate timestamp (assuming sequential windows)
-                timestamp = batch_idx * dataloader.batch_size * evaluator.aggregator.stride + i * evaluator.aggregator.stride
+                # Calculate timestamp - need to fix this calculation
+                # Use actual window start time based on stride
+                timestamp = batch_idx * len(fusion_logits) * evaluator.aggregator.stride + i * evaluator.aggregator.stride
                 all_window_timestamps.append(timestamp)
     
     print(f"Inference complete. Processed {len(all_window_predictions)} windows.")
@@ -82,8 +85,8 @@ def run_inference_with_evaluation(model,
     for method in aggregation_methods:
         print(f"\nUsing aggregation method: {method}")
         event_result, per_file_results = evaluator.evaluate_events(
-            [pred for pred in window_probabilities],
-            [gt for gt in window_ground_truth],
+            [pred for pred in window_probabilities],  # Pass probability arrays
+            [int(gt) for gt in window_ground_truth],   # Pass ground truth as scalars
             all_window_timestamps,
             all_filenames,
             aggregation_method=method,
@@ -119,6 +122,116 @@ def run_inference_with_evaluation(model,
         save_evaluation_results(results, results_dir)
     
     return results
+
+
+# def run_inference_with_evaluation(model,
+#                                  dataloader: DataLoader,
+#                                  evaluator: SeizureEvaluator,
+#                                  device: torch.device,
+#                                  save_results: bool = True,
+#                                  results_dir: str = "results/") -> Dict:
+#     """
+#     Run inference and comprehensive evaluation
+    
+#     Returns:
+#         Dictionary containing all evaluation results and predictions
+#     """
+#     model.eval()
+    
+#     # Storage for predictions and metadata
+#     all_window_predictions = []
+#     all_window_ground_truth = []
+#     all_window_timestamps = []
+#     all_filenames = []
+#     all_window_probabilities = []
+    
+#     print("Running inference...")
+#     with torch.no_grad():
+#         for batch_idx, batch in enumerate(tqdm(dataloader, desc="Inference")):
+#             # Prepare inputs
+#             frames = video_transform(batch['frames']).to(device, non_blocking=True)
+#             body = batch['body'].permute(0,4,2,3,1).float().to(device, non_blocking=True)
+#             face = batch['face'].permute(0,4,2,3,1).float().to(device, non_blocking=True)
+#             rh = batch['rh'].permute(0,4,2,3,1).float().to(device, non_blocking=True)
+#             lh = batch['lh'].permute(0,4,2,3,1).float().to(device, non_blocking=True)
+#             hrv = batch['hrv'].to(torch.float).to(device, non_blocking=True)
+            
+#             # Ground truth
+#             gt_labels = torch.argmax(batch['super_lbls'], dim=1).cpu().numpy()
+            
+#             # Model inference
+#             outputs = model(frames, body, face, rh, lh, hrv)
+#             fusion_logits = outputs['fusion_outputs'].cpu().numpy()
+#             fusion_probs = torch.softmax(outputs['fusion_outputs'], dim=1).cpu().numpy()
+            
+#             # Store results
+#             for i in range(len(fusion_logits)):
+#                 all_window_predictions.append(fusion_logits[i])
+#                 all_window_probabilities.append(fusion_probs[i])
+#                 all_window_ground_truth.append(gt_labels[i])
+#                 all_filenames.append(batch['filename'][i])
+                
+#                 # Calculate timestamp (assuming sequential windows)
+#                 timestamp = batch_idx * dataloader.batch_size * evaluator.aggregator.stride + i * evaluator.aggregator.stride
+#                 all_window_timestamps.append(timestamp)
+    
+#     print(f"Inference complete. Processed {len(all_window_predictions)} windows.")
+    
+#     # Convert to numpy arrays
+#     window_predictions = np.array(all_window_predictions)
+#     window_probabilities = np.array(all_window_probabilities)
+#     window_ground_truth = np.array(all_window_ground_truth)
+    
+#     print("\nEvaluating at window level...")
+#     # Window-level evaluation
+#     window_results = evaluator.evaluate_windows(window_probabilities, window_ground_truth)
+#     print_evaluation_results(window_results, "Window-Level Results")
+    
+#     print("\nEvaluating at event level...")
+#     # Event-level evaluation with different aggregation methods
+#     event_results = {}
+#     aggregation_methods = ['average', 'majority', 'max_prob']
+    
+#     for method in aggregation_methods:
+#         print(f"\nUsing aggregation method: {method}")
+#         event_result, per_file_results = evaluator.evaluate_events(
+#             [pred for pred in window_probabilities],
+#             [gt for gt in window_ground_truth],
+#             all_window_timestamps,
+#             all_filenames,
+#             aggregation_method=method,
+#             apply_postprocessing=True
+#         )
+#         event_results[method] = {
+#             'results': event_result,
+#             'per_file': per_file_results
+#         }
+#         print_evaluation_results(event_result, f"Event-Level Results ({method})")
+        
+#         # Print additional event-level metrics
+#         summary = per_file_results['summary']
+#         print(f"False Positives per Hour: {summary['fp_per_hour']:.2f}")
+#         print(f"Total Files Evaluated: {summary['total_files']}")
+#         print(f"Total Duration: {summary['total_duration_hours']:.2f} hours")
+    
+#     # Create comprehensive results dictionary
+#     results = {
+#         'window_level': window_results,
+#         'event_level': event_results,
+#         'raw_predictions': {
+#             'window_predictions': window_predictions,
+#             'window_probabilities': window_probabilities,
+#             'window_ground_truth': window_ground_truth,
+#             'filenames': all_filenames,
+#             'timestamps': all_window_timestamps
+#         }
+#     }
+    
+#     # Save results if requested
+#     if save_results:
+#         save_evaluation_results(results, results_dir)
+    
+#     return results
 
 def save_evaluation_results(results: Dict, results_dir: str):
     """Save evaluation results to files"""

@@ -11,9 +11,9 @@ import os, psutil
 from configs.config import config
 import os
 # os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
-os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID";
+# os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID";
 # The GPU id to use, usually either "0" or "1";
-os.environ["CUDA_VISIBLE_DEVICES"] = "0";
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0";
 from models.gcn import PoseGCN
 from models.ctrgcn import PoseCTGCN
 from models.slowfast import SlowFast

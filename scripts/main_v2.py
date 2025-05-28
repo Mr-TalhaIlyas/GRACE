@@ -119,7 +119,7 @@ from data.utils import collate, values_fromreport, print_formatted_table
 from models.model import MME_Model
 from torch.optim.lr_scheduler import CyclicLR
 from models.utils.lr_scheduler import LR_Scheduler
-from models.utils.tools import save_chkpt
+from models.utils.tools import save_chkpt, load_chkpt
 from tools.training_v6 import Trainer, Evaluator
 
 from sklearn.metrics import confusion_matrix, classification_report
@@ -303,15 +303,21 @@ for epoch in range(config['epochs']):
 if config['LOG_WANDB']:
     wandb.finish()
 #%%
-
-
+# load the best checkpoint
+chkpt_path = os.path.join(
+    config['checkpoint_path'],
+    # f"{config['experiment_name']}_fold_{config['num_fold']}.pth"
+    'alfred_cv_full_fusion_ce_margin_jsd_lossv15.pth'
+    )
+load_chkpt(model, optimizer, chkpt_path)
+#%%
 from tools.infer_eval import SeizureEvaluator, run_inference_with_evaluation
 # example_evaluation_pipeline
 
 
 # After training loop, add evaluation
 print("\nStarting comprehensive evaluation...")
-
+config['window_overlap'] = 3
 # Initialize evaluator with your config parameters
 evaluator = SeizureEvaluator(
     window_duration=config['sample_duration'],
@@ -331,6 +337,27 @@ evaluation_results = run_inference_with_evaluation(
     results_dir=f"results/{config['experiment_name']}_fold_{config['num_fold']}/"
 )
 
+# Print final evaluation metrics
+print("\nFinal Evaluation Metrics (Window-Level):")
+print(f"Sensitivity: {evaluation_results['window_level'].sensitivity:.4f}")
+print(f"Specificity: {evaluation_results['window_level'].specificity:.4f}")
+print(f"F1 Score: {evaluation_results['window_level'].f1_score:.4f}")
+print(f"AUROC: {evaluation_results['window_level'].auroc:.4f}")
+print(f"Cohen Kappa: {evaluation_results['window_level'].cohen_kappa:.4f}")
+
+# Print event-level metrics for best aggregation method
+best_method = 'average'  # or choose based on validation performance
+event_results = evaluation_results['event_level'][best_method]
+
+print("\nFinal Evaluation Metrics (Event-Level):")
+print(f"Sensitivity: {event_results['results'].sensitivity:.4f}")
+print(f"Precision: {event_results['results'].precision:.4f}")
+print(f"F1 Score: {event_results['results'].f1_score:.4f}")
+print(f"False Positives per Hour: {event_results['per_file']['summary']['fp_per_hour']:.4f}")
+
+print("Evaluation complete!")
+
+#%%
 # Log final evaluation metrics to wandb if enabled
 if config['LOG_WANDB']:
     # Log window-level metrics

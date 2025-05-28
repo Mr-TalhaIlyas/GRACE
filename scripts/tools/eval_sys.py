@@ -30,6 +30,104 @@ class EvaluationResults:
     true_negatives: int
     cohen_kappa: float
     
+# class WindowAggregator:
+#     """Combines overlapping window predictions into continuous sequences"""
+    
+#     def __init__(self, 
+#                  window_duration: float,
+#                  overlap: float,
+#                  sampling_rate: float = 1.0,
+#                  aggregation_method: str = 'average'):
+#         """
+#         Args:
+#             window_duration: Duration of each window in seconds
+#             overlap: Overlap between windows in seconds  
+#             sampling_rate: Sampling rate of the output sequence (Hz)
+#             aggregation_method: 'average', 'majority', 'max_prob'
+#         """
+#         self.window_duration = window_duration
+#         self.overlap = overlap
+#         self.stride = window_duration - overlap
+#         self.sampling_rate = sampling_rate
+#         self.aggregation_method = aggregation_method
+        
+#     def aggregate_windows(self, 
+#                          window_predictions: List[np.ndarray],
+#                          window_timestamps: List[float],
+#                          total_duration: Optional[float] = None) -> Tuple[np.ndarray, np.ndarray]:
+#         """
+#         Aggregate overlapping window predictions into a continuous sequence
+        
+#         Args:
+#             window_predictions: List of prediction arrays (probabilities or logits)
+#             window_timestamps: List of start times for each window
+#             total_duration: Total duration of the sequence (if known)
+            
+#         Returns:
+#             Tuple of (continuous_predictions, timestamps)
+#         """
+#         if not window_predictions:
+#             return np.array([]), np.array([])
+            
+#         # Determine output sequence length
+#         if total_duration is None:
+#             max_end_time = max(ts + self.window_duration for ts in window_timestamps)
+#             total_duration = max_end_time
+            
+#         output_length = int(total_duration * self.sampling_rate)
+        
+#         # Initialize accumulators
+#         prob_sum = np.zeros((output_length, window_predictions[0].shape[-1]))
+#         count = np.zeros(output_length)
+        
+#         # Accumulate predictions
+#         for pred, start_time in zip(window_predictions, window_timestamps):
+#             start_idx = int(start_time * self.sampling_rate)
+#             window_length = int(self.window_duration * self.sampling_rate)
+#             end_idx = min(start_idx + window_length, output_length)
+            
+#             # Handle case where prediction might be shorter than expected
+#             pred_length = min(pred.shape[0] if pred.ndim > 1 else len(pred), end_idx - start_idx)
+            
+#             if self.aggregation_method == 'average':
+#                 prob_sum[start_idx:start_idx + pred_length] += pred[:pred_length]
+#                 count[start_idx:start_idx + pred_length] += 1
+#             elif self.aggregation_method == 'max_prob':
+#                 prob_sum[start_idx:start_idx + pred_length] = np.maximum(
+#                     prob_sum[start_idx:start_idx + pred_length], pred[:pred_length])
+#                 count[start_idx:start_idx + pred_length] = 1
+                
+#         # Avoid division by zero
+#         count = np.maximum(count, 1)
+        
+#         if self.aggregation_method in ['average', 'max_prob']:
+#             continuous_pred = prob_sum / count[:, np.newaxis] if prob_sum.ndim > 1 else prob_sum / count
+#         elif self.aggregation_method == 'majority':
+#             # For majority voting, we need binary predictions
+#             binary_sum = np.zeros(output_length)
+#             for pred, start_time in zip(window_predictions, window_timestamps):
+#                 start_idx = int(start_time * self.sampling_rate)
+#                 window_length = int(self.window_duration * self.sampling_rate)
+#                 end_idx = min(start_idx + window_length, output_length)
+                
+#                 # Convert to binary if needed
+#                 if pred.ndim > 1:
+#                     binary_pred = np.argmax(pred, axis=-1)
+#                 else:
+#                     binary_pred = (pred > 0.5).astype(int)
+                    
+#                 pred_length = min(len(binary_pred), end_idx - start_idx)
+#                 binary_sum[start_idx:start_idx + pred_length] += binary_pred[:pred_length]
+                
+#             continuous_pred = (binary_sum / count > 0.5).astype(int)
+        
+#         # Generate timestamps
+#         timestamps = np.arange(output_length) / self.sampling_rate
+        
+#         return continuous_pred, timestamps
+
+# ...existing code...
+
 class WindowAggregator:
     """Combines overlapping window predictions into continuous sequences"""
     
@@ -59,7 +157,7 @@ class WindowAggregator:
         Aggregate overlapping window predictions into a continuous sequence
         
         Args:
-            window_predictions: List of prediction arrays (probabilities or logits)
+            window_predictions: List of prediction arrays (probabilities/logits) or scalar values
             window_timestamps: List of start times for each window
             total_duration: Total duration of the sequence (if known)
             
@@ -69,6 +167,10 @@ class WindowAggregator:
         if not window_predictions:
             return np.array([]), np.array([])
             
+        # Check if predictions are scalars or arrays
+        first_pred = window_predictions[0]
+        is_scalar = np.isscalar(first_pred) or (isinstance(first_pred, np.ndarray) and first_pred.ndim == 0)
+        
         # Determine output sequence length
         if total_duration is None:
             max_end_time = max(ts + self.window_duration for ts in window_timestamps)
@@ -76,55 +178,87 @@ class WindowAggregator:
             
         output_length = int(total_duration * self.sampling_rate)
         
-        # Initialize accumulators
-        prob_sum = np.zeros((output_length, window_predictions[0].shape[-1]))
-        count = np.zeros(output_length)
-        
-        # Accumulate predictions
-        for pred, start_time in zip(window_predictions, window_timestamps):
-            start_idx = int(start_time * self.sampling_rate)
-            window_length = int(self.window_duration * self.sampling_rate)
-            end_idx = min(start_idx + window_length, output_length)
+        if is_scalar:
+            # Handle scalar predictions (e.g., ground truth labels)
+            prob_sum = np.zeros(output_length)
+            count = np.zeros(output_length)
             
-            # Handle case where prediction might be shorter than expected
-            pred_length = min(pred.shape[0] if pred.ndim > 1 else len(pred), end_idx - start_idx)
-            
-            if self.aggregation_method == 'average':
-                prob_sum[start_idx:start_idx + pred_length] += pred[:pred_length]
-                count[start_idx:start_idx + pred_length] += 1
-            elif self.aggregation_method == 'max_prob':
-                prob_sum[start_idx:start_idx + pred_length] = np.maximum(
-                    prob_sum[start_idx:start_idx + pred_length], pred[:pred_length])
-                count[start_idx:start_idx + pred_length] = 1
-                
-        # Avoid division by zero
-        count = np.maximum(count, 1)
-        
-        if self.aggregation_method in ['average', 'max_prob']:
-            continuous_pred = prob_sum / count[:, np.newaxis] if prob_sum.ndim > 1 else prob_sum / count
-        elif self.aggregation_method == 'majority':
-            # For majority voting, we need binary predictions
-            binary_sum = np.zeros(output_length)
+            # Accumulate predictions
             for pred, start_time in zip(window_predictions, window_timestamps):
                 start_idx = int(start_time * self.sampling_rate)
                 window_length = int(self.window_duration * self.sampling_rate)
                 end_idx = min(start_idx + window_length, output_length)
                 
-                # Convert to binary if needed
-                if pred.ndim > 1:
-                    binary_pred = np.argmax(pred, axis=-1)
-                else:
-                    binary_pred = (pred > 0.5).astype(int)
-                    
-                pred_length = min(len(binary_pred), end_idx - start_idx)
-                binary_sum[start_idx:start_idx + pred_length] += binary_pred[:pred_length]
+                if self.aggregation_method == 'average':
+                    prob_sum[start_idx:end_idx] += pred
+                    count[start_idx:end_idx] += 1
+                elif self.aggregation_method == 'max_prob':
+                    prob_sum[start_idx:end_idx] = np.maximum(prob_sum[start_idx:end_idx], pred)
+                    count[start_idx:end_idx] = 1
+                elif self.aggregation_method == 'majority':
+                    prob_sum[start_idx:end_idx] += pred
+                    count[start_idx:end_idx] += 1
+            
+            # Avoid division by zero
+            count = np.maximum(count, 1)
+            
+            if self.aggregation_method in ['average', 'max_prob']:
+                continuous_pred = prob_sum / count
+            elif self.aggregation_method == 'majority':
+                continuous_pred = (prob_sum / count > 0.5).astype(int)
                 
-            continuous_pred = (binary_sum / count > 0.5).astype(int)
+        else:
+            # Handle array predictions (e.g., probability vectors)
+            # Initialize accumulators
+            prob_sum = np.zeros((output_length, window_predictions[0].shape[-1]))
+            count = np.zeros(output_length)
+            
+            # Accumulate predictions
+            for pred, start_time in zip(window_predictions, window_timestamps):
+                start_idx = int(start_time * self.sampling_rate)
+                window_length = int(self.window_duration * self.sampling_rate)
+                end_idx = min(start_idx + window_length, output_length)
+                
+                # Handle case where prediction might be shorter than expected
+                pred_length = min(pred.shape[0] if pred.ndim > 1 else len(pred), end_idx - start_idx)
+                
+                if self.aggregation_method == 'average':
+                    prob_sum[start_idx:start_idx + pred_length] += pred[:pred_length]
+                    count[start_idx:start_idx + pred_length] += 1
+                elif self.aggregation_method == 'max_prob':
+                    prob_sum[start_idx:start_idx + pred_length] = np.maximum(
+                        prob_sum[start_idx:start_idx + pred_length], pred[:pred_length])
+                    count[start_idx:start_idx + pred_length] = 1
+                    
+            # Avoid division by zero
+            count = np.maximum(count, 1)
+            
+            if self.aggregation_method in ['average', 'max_prob']:
+                continuous_pred = prob_sum / count[:, np.newaxis] if prob_sum.ndim > 1 else prob_sum / count
+            elif self.aggregation_method == 'majority':
+                # For majority voting, we need binary predictions
+                binary_sum = np.zeros(output_length)
+                for pred, start_time in zip(window_predictions, window_timestamps):
+                    start_idx = int(start_time * self.sampling_rate)
+                    window_length = int(self.window_duration * self.sampling_rate)
+                    end_idx = min(start_idx + window_length, output_length)
+                    
+                    # Convert to binary if needed
+                    if pred.ndim > 1:
+                        binary_pred = np.argmax(pred, axis=-1)
+                    else:
+                        binary_pred = (pred > 0.5).astype(int)
+                        
+                    pred_length = min(len(binary_pred), end_idx - start_idx)
+                    binary_sum[start_idx:start_idx + pred_length] += binary_pred[:pred_length]
+                    
+                continuous_pred = (binary_sum / count > 0.5).astype(int)
         
         # Generate timestamps
         timestamps = np.arange(output_length) / self.sampling_rate
         
         return continuous_pred, timestamps
+
 
 class PostProcessor:
     """Post-processing methods to reduce false positives"""

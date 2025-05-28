@@ -18,7 +18,7 @@ def save_chkpt(model, optimizer, epoch=0, loss=0, acc=0, return_chkpt=False):
 def load_chkpt(model, optimizer, chkpt_path):
     if os.path.isfile(chkpt_path):
         print(f'-> Loading checkpoint from {chkpt_path}')
-        checkpoint = torch.load(chkpt_path)
+        checkpoint = torch.load(chkpt_path, map_location=torch.device('cpu'))
 
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
