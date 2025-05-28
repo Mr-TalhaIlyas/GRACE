@@ -317,7 +317,6 @@ from tools.infer_eval import SeizureEvaluator, run_inference_with_evaluation
 
 # After training loop, add evaluation
 print("\nStarting comprehensive evaluation...")
-config['window_overlap'] = 3
 # Initialize evaluator with your config parameters
 evaluator = SeizureEvaluator(
     window_duration=config['sample_duration'],

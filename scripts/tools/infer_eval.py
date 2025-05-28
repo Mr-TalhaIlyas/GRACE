@@ -11,8 +11,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-
-
 def run_inference_with_evaluation(model,
                                  dataloader: DataLoader,
                                  evaluator: SeizureEvaluator,
@@ -33,6 +31,7 @@ def run_inference_with_evaluation(model,
     all_window_timestamps = []
     all_filenames = []
     all_window_probabilities = []
+    all_mapping_info = []
     
     print("Running inference...")
     with torch.no_grad():
@@ -53,17 +52,25 @@ def run_inference_with_evaluation(model,
             fusion_logits = outputs['fusion_outputs'].cpu().numpy()
             fusion_probs = torch.softmax(outputs['fusion_outputs'], dim=1).cpu().numpy()
             
-            # Store results
-            for i in range(len(fusion_logits)):
-                all_window_predictions.append(fusion_logits[i])
-                all_window_probabilities.append(fusion_probs[i])
-                all_window_ground_truth.append(gt_labels[i])  # Store as scalar
-                all_filenames.append(batch['filename'][i])
-                
-                # Calculate timestamp - need to fix this calculation
-                # Use actual window start time based on stride
-                timestamp = batch_idx * len(fusion_logits) * evaluator.aggregator.stride + i * evaluator.aggregator.stride
-                all_window_timestamps.append(timestamp)
+            # Store results with proper mapping info
+            batch_size = len(fusion_logits)
+            for i in range(batch_size):
+                # Get the actual dataloader index for this sample
+                actual_idx = batch_idx * dataloader.batch_size + i
+                if actual_idx < len(dataloader.dataset.mapping):
+                    # Get mapping info: (fname, ridx, vid_start, ecg_start)
+                    mapping_info = dataloader.dataset.mapping[actual_idx]
+                    fname, ridx, vid_start, ecg_start = mapping_info
+                    
+                    # Calculate actual timestamp in seconds from vid_start frames
+                    timestamp = vid_start / dataloader.dataset.config['video_fps']
+                    
+                    all_window_predictions.append(fusion_logits[i])
+                    all_window_probabilities.append(fusion_probs[i])
+                    all_window_ground_truth.append(gt_labels[i])
+                    all_filenames.append(batch['filename'][i])
+                    all_window_timestamps.append(timestamp)
+                    all_mapping_info.append(mapping_info)
     
     print(f"Inference complete. Processed {len(all_window_predictions)} windows.")
     
@@ -78,13 +85,28 @@ def run_inference_with_evaluation(model,
     print_evaluation_results(window_results, "Window-Level Results")
     
     print("\nEvaluating at event level...")
+    
+    # Update evaluator settings to match the actual dataloader configuration
+    actual_window_duration = dataloader.dataset.config['sample_duration']
+    actual_overlap = dataloader.dataset.config.get('window_overlap', 0)  # validation set uses 0 overlap
+    actual_stride = actual_window_duration - actual_overlap
+    
+    # Create a new evaluator with correct parameters
+    event_evaluator = SeizureEvaluator(
+        window_duration=actual_window_duration,
+        overlap=actual_overlap,
+        sampling_rate=1.0,  # 1 Hz output for event detection
+        min_seizure_duration=5.0,
+        min_overlap_ratio=0.1
+    )
+    
     # Event-level evaluation with different aggregation methods
     event_results = {}
     aggregation_methods = ['average', 'majority', 'max_prob']
     
     for method in aggregation_methods:
         print(f"\nUsing aggregation method: {method}")
-        event_result, per_file_results = evaluator.evaluate_events(
+        event_result, per_file_results = event_evaluator.evaluate_events(
             [pred for pred in window_probabilities],  # Pass probability arrays
             [int(gt) for gt in window_ground_truth],   # Pass ground truth as scalars
             all_window_timestamps,
@@ -103,6 +125,14 @@ def run_inference_with_evaluation(model,
         print(f"False Positives per Hour: {summary['fp_per_hour']:.2f}")
         print(f"Total Files Evaluated: {summary['total_files']}")
         print(f"Total Duration: {summary['total_duration_hours']:.2f} hours")
+        
+        # Debug information
+        print(f"\nDetailed per-file results for {method}:")
+        for filename, file_result in per_file_results.items():
+            if filename != 'summary':
+                print(f"  {filename}: TP={file_result['tp']}, FP={file_result['fp']}, FN={file_result['fn']}")
+                print(f"    Predicted events: {len(file_result['predicted_events'])}")
+                print(f"    True events: {len(file_result['true_events'])}")
     
     # Create comprehensive results dictionary
     results = {
@@ -113,7 +143,8 @@ def run_inference_with_evaluation(model,
             'window_probabilities': window_probabilities,
             'window_ground_truth': window_ground_truth,
             'filenames': all_filenames,
-            'timestamps': all_window_timestamps
+            'timestamps': all_window_timestamps,
+            'mapping_info': all_mapping_info
         }
     }
     

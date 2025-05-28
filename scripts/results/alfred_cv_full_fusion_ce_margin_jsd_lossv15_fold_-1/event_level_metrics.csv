@@ -1,0 +1,4 @@
+aggregation_method,sensitivity,precision,f1_score,true_positives,false_positives,false_negatives,fp_per_hour
+average,0.0,0.0,0.0,0,0,20,0.0
+majority,0.0,0.0,0.0,0,0,20,0.0
+max_prob,0.0,0.0,0.0,0,0,20,0.0
