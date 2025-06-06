@@ -3,6 +3,7 @@
 *.chkpt
 *.pth
 logs/
+__pycache__/
 # ignore all .pyc files
 *.pyc
 # ignore all .pkl files
@@ -14,3 +15,15 @@ logs/
 *.txt
 *.mp4
 *.avi
+*.html
+*.png
+*.jpg
+*.npz
+*.npy
+*.csv
+*.xlsx
+*.pdf
+*.joblib
+
+
+.gitignore

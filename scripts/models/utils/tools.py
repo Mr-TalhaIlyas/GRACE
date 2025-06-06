@@ -15,13 +15,16 @@ def save_chkpt(model, optimizer, epoch=0, loss=0, acc=0, return_chkpt=False):
     if return_chkpt:
         return os.path.join(config["checkpoint_path"], f'{config["experiment_name"]}.pth')#_epoch{epoch}
 
-def load_chkpt(model, optimizer, chkpt_path):
+def load_chkpt(model, optimizer=None, chkpt_path=None):
     if os.path.isfile(chkpt_path):
         print(f'-> Loading checkpoint from {chkpt_path}')
         checkpoint = torch.load(chkpt_path, map_location=torch.device('cpu'))
 
         model.load_state_dict(checkpoint['model_state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        if optimizer is not None:
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        elif optimizer is None:
+            print('-> No optimizer state loaded, only model state.')
         epoch = checkpoint['epoch']
         loss = checkpoint['loss']
         acc = checkpoint['acc']

@@ -332,7 +332,7 @@ class AdaptiveModFusion(nn.Module):
         # 7. Classification
         super_class_logits = self.super_class_head(x_pooled)
         
-        self.fusion_feats = x_pooled
+        self.fusion_feats_raw = x_pooled
         return super_class_logits
 
 
@@ -394,7 +394,7 @@ class EnhancedPoseFusion(nn.Module):
         op = self.mlp(pooled_feat)
         cls_out = self.cls_head(pooled_feat)
         
-        self.pose_feats = op
+        self.pose_feats_raw = op
         return cls_out, op
 
 
@@ -434,6 +434,8 @@ class Fusion(torch.nn.Module):
             pose = torch.cat(pose, dim=1)
             
             pose_op, fused_pose = self.pose_fusion(pose, pose_batch_edge_index, pose_batch_vector)
+            
+            self.pose_feats = fused_pose # for external use
             
             ecg = ecg.unsqueeze(1)
             flow = flow.unsqueeze(1)

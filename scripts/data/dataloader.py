@@ -43,6 +43,7 @@ from data.augment import vid_augment, pose_augment, ecg_augment
 
 class GEN_DATA_LISTS:
     def __init__(self, config):
+        self.config = config
         self.folds = config.get('folds', None) # directory containing fold definition files
         self.ecg_dir = config['ecg_dir']     # directory for ECG .npy files
         self.flow_dir = config['flow_dir']   # directory for flow .mp4 files
@@ -111,6 +112,96 @@ class GEN_DATA_LISTS:
                     error_flag = True
         if not error_flag:
             print("All paths exist.")
+            
+    def calculate_class_weights(self, data_paths_dict, num_target_classes):
+        """
+        Calculates class weights based on the ENet formula.
+        Args:
+            data_paths_dict (dict): Dictionary of data paths, e.g., from get_folds().
+            num_target_classes (int): Number of target classes (e.g., len(config['super_classes'])).
+        Returns:
+            torch.Tensor: Tensor of class weights.
+        """
+        # Using ecg_lbl_paths as the source for labels, assuming consistency
+        # You could also use 'flow_lbls'
+        label_files = data_paths_dict.get('ecg_lbls', data_paths_dict.get('flow_lbls'))
+        if not label_files:
+            print("Warning: No label files found in data_paths_dict for weight calculation. Returning uniform weights.")
+            return torch.ones(num_target_classes, dtype=torch.float32)
+
+        label_counts = torch.zeros(num_target_classes, dtype=torch.float64)
+        
+        print(f"Calculating class weights for {num_target_classes} classes...")
+        for idx, label_path in enumerate(label_files):
+            if idx % 100 == 0 or idx == len(label_files) - 1:
+                print(f"Processing label file {idx+1}/{len(label_files)} for weights")
+            try:
+                raw_labels = np.load(label_path) # This is a 1D array of labels
+            except FileNotFoundError:
+                print(f"Warning: Label file not found {label_path}, skipping.")
+                continue
+            except Exception as e:
+                print(f"Warning: Could not load label file {label_path} due to {e}, skipping.")
+                continue
+
+            # 1. Apply ignore_postictal filtering (if configured)
+            if self.config.get('ignore_postictal', False):
+                # Assuming postictal is class 5, as in SlidingWindowMMELoader logic
+                raw_labels = raw_labels[raw_labels != 5] 
+                if raw_labels.size == 0:
+                    continue
+
+            # 2. Map raw_labels to target super_classes
+            # This logic must match how targets are derived for the loss function.
+            # Current config['super_classes'] = ['baseline', 'seizure'] (num_target_classes = 2)
+            # Original sub_classes are ['baseline', 'focal', 'tonic', 'clonic', 'pnes'] (0, 1, 2, 3, 4)
+            
+            processed_labels_for_counting = np.array([]) # Ensure it's an array
+
+            if num_target_classes == 2:
+                # Maps 0 (baseline) to 0.
+                # Maps 1 (focal), 2 (tonic), 3 (clonic), 4 (pnes) to 1 (seizure).
+                processed_labels_for_counting = np.clip(raw_labels, 0, 1)
+            # Add elif clauses here if you have other num_target_classes schemes, e.g.:
+            # elif num_target_classes == 3 and self.config.get('super_classes') == ['baseline', 'gtcs', 'pnes']:
+            #     def map_to_3_classes(x):
+            #         if x == 0: return 0       # baseline
+            #         if x in [1, 2, 3]: return 1 # gtcs (focal, tonic, clonic)
+            #         if x == 4: return 2       # pnes
+            #         return -1 # To be filtered out
+            #     temp_mapped = np.array([map_to_3_classes(x) for x in raw_labels])
+            #     processed_labels_for_counting = temp_mapped[temp_mapped != -1]
+            else:
+                # Fallback: assumes raw_labels are already 0 to N-1.
+                # This might need adjustment based on your specific label encoding if not 2 classes.
+                print(f"Warning: Class weight calculation for {num_target_classes} classes using direct mapping. "
+                    "Ensure raw labels are 0 to N-1 or add specific mapping logic.")
+                processed_labels_for_counting = raw_labels[(raw_labels >= 0) & (raw_labels < num_target_classes)]
+
+            if processed_labels_for_counting.size == 0:
+                continue
+                
+            unique, counts = np.unique(processed_labels_for_counting, return_counts=True)
+            
+            for class_idx, count in zip(unique, counts):
+                if 0 <= class_idx < num_target_classes:
+                    label_counts[class_idx] += count
+        
+        if label_counts.sum() == 0:
+            print("Warning: Total valid label count for weights is zero after processing. Returning uniform weights.")
+            weights = torch.ones(num_target_classes, dtype=torch.float32)
+        else:
+            # Using ENet weighting: w_class = 1 / ln(1.02 + class_percentage)
+            class_percentages = label_counts / label_counts.sum()
+            weights = 1.0 / torch.log(1.02 + class_percentages)
+            # Handle cases where a class might have 0 instances after all processing
+            # Assign a weight similar to a class with very small representation
+            weights[label_counts == 0] = 1.0 / torch.log(torch.tensor(1.02)) 
+        
+        # Move to GPU if configured and available
+        if torch.cuda.is_available() and self.config.get('gpus_to_use', '-1') != '-1':
+            return weights.float().cuda(torch.device(f"cuda:{self.config.get('gpus_to_use').split(',')[0]}"))
+        return weights.float()
 
 
         

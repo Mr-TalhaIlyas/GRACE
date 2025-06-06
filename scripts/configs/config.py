@@ -12,7 +12,7 @@ config = dict(
                 ema_momentum = 0.999,
                 sanity_check = False,
                 project_name= 'NPJ',
-                experiment_name= 'alfred_cv_full_fusion_ce_margin_jsd_lossv15',
+                experiment_name= 'alfred_cv_full_fusion_ce_margin_jsd_lossv17_3i',
 
                 log_directory= "/home/user01/Data/npj/logs/",
                 checkpoint_path= "/home/user01/Data/npj/chkpts/",
@@ -43,7 +43,7 @@ config = dict(
 
                 # learning rate
                 learning_rate= 0.0001, # 0.001
-                pose_lr_multiplier= 1.0,#0.1,
+                pose_lr_multiplier= 0.5,#0.1,
                 lr_schedule= 'cos', # cos cyclic
                 max_lr = 0.0001, # e.g., max_lr will be 6x base_lr for each group
                 base_lr = 0.000001, # e.g., base_lr will be 1x base_lr for each group
@@ -62,7 +62,7 @@ config = dict(
                 video_fps = 30, # FPS
                 ecg_freq = 250, # Hz
                 sample_duration = 10, # in seconds from [3,5,7,10]
-                window_overlap = 6, # in seconds
+                window_overlap = 0, # in seconds
 
                 video_height= 224,
                 video_width= 224,
@@ -75,6 +75,16 @@ config = dict(
                 sub_classes = ['baseline', 'focal', 'tonic', 'clonic', 'pnes'],
                 # super_classes = ['baseline', 'gtcs', 'pnes'],
                 super_classes = ['baseline', 'seizure'],
+                
+                LABEL_MAP_TUH = {"fnsz": 1,#0,
+                                 "tcsz": 1,#1,
+                                 "nesz": 1,#2,
+                                 "bckg": 0,#-1
+                                 },
+                LABEL_MAP_SeizeIT2 = {"sz_foc_f2b": 1,#0,
+                                      "sz_gen_m_tonicClonic": 1,#1,
+                                      "bckg": 0,#-1
+                                      },
                 # ECG CWT settings
                 steps = 128,
                 wavelet = "mexh",
@@ -100,7 +110,17 @@ config = dict(
                 neg_margin_factor_pose_vs_ecg= 0.5,
                 # neg_margin_factor_flow_vs_pose= 0.5,
                 # neg_margin_factor_pose_vs_flow= 1.0,
-                
+                # Example: Add to your config
+                recall_thresholds = {
+                    'flow': 0.80,  # Target recall for flow modality
+                    'ecg': 0.75,   # Target recall for ECG modality
+                    'pose': 0.75   # Target recall for pose (will freeze all GCNs)
+                },
+                encoder_module_names = {
+                    'flow': ['slowfast'],  # model.slowfast
+                    'ecg': ['ewt'],       # model.ewt
+                    'pose': ['bodygcn', 'facegcn', 'rhgcn', 'lhgcn'] # model.bodygcn, etc.
+                },
                 # Model
                 model = config_model.mme,
                 # AUGMENTATIONS

@@ -1,0 +1,232 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Oct 22 00:08:13 2024
+
+@author: talha.ilyas@monash.edu
+"""
+#%%
+
+import os
+import joblib
+import wandb
+from tsai.all import *
+import sklearn.metrics as skm
+from functools import partial
+from fastai.metrics import Precision, Recall, F1Score
+from fastai.callback.wandb import WandbCallback
+from fastai.callback.tracker import SaveModelCallback, EarlyStoppingCallback
+from fastai.losses import CrossEntropyLossFlat, LabelSmoothingCrossEntropyFlat
+from fastai.learner import Learner
+from fastai.metrics import accuracy
+from torch.optim import AdamW
+from fastai.optimizer import OptimWrapper
+from fastai.callback.training import GradientClip
+from tsai.data.mixed_augmentation import MixUp1d, IntraClassCutMix1d
+
+#%%
+exp_name = 'Fold1_w12_o6_ITplus_v2_bvg_ecg_viz' 
+# Define your configuration for wandb
+config = {
+    'batch_size_train': 64,#64, 8 
+    'batch_size_valid': 128,#128, 16
+    'lr_max': 1e-3,
+    'epochs': 100,
+    'architecture': 'InceptionTime',
+    'dataset': 'ALFRED',
+    'data_dir': '/data_hdd/talha/EEG/data/ECG-data/',
+    'chkpt_dir': '/data_hdd/talha/EEG/chkpts/',
+    'log_dir': '/data_hdd/talha/EEG/logs/',
+    'exp_typ': 'bvg', # bvp, gvp, bvg None bvs
+    # Add any other parameters you'd like to track
+}
+
+# Initialize wandb with your project and configuration
+# wandb.init(dir=config['log_dir'], project="ALFRED_EEG", name = exp_name, config=config)
+
+# Load your data
+data = joblib.load(f'{config["data_dir"]}Alfred_fold_1_w10_o5_ecg.joblib')
+
+X_train = data['train_data']#[:,:,:2000]
+y_train = data['train_label']
+
+if config['exp_typ'] == 'gvp':
+    # filter incdices based on the labels
+    idx = np.where(y_train != 0) # removed basline
+    X_train = X_train[idx]
+    y_train = y_train[idx] - 1 # to make it 0 based
+elif config['exp_typ'] == 'bvg':
+    # filter incdices based on the labels
+    idx = np.where(y_train != 2) # removed pnes
+    X_train = X_train[idx]
+    y_train = y_train[idx]
+elif config['exp_typ'] == 'bvp':
+    # filter incdices based on the labels
+    idx = np.where(y_train != 1) # removed gtcs
+    X_train = X_train[idx]
+    y_train = y_train[idx]
+elif config['exp_typ'] == 'bvs':
+    print('Baseline vs Seizure Experiment')
+    # baseline vs seizuer (so group all seizures as 1)
+    y_train = np.clip(y_train, 0, 1)
+else:
+    pass
+y_train = y_train.astype(np.float16).astype(str)
+
+X_test = data['test_data']#[:,:,:2000]  
+y_test = data['test_label']
+
+if config['exp_typ'] == 'gvp':
+    # filter incdices based on the labels
+    idx = np.where(y_test != 0) # removed basline
+    X_test = X_test[idx]
+    y_test = y_test[idx] - 1 # to make it 0 based
+elif config['exp_typ'] == 'bvg':
+    # filter incdices based on the labels
+    idx = np.where(y_test != 2) # removed pnes
+    X_test = X_test[idx]
+    y_test = y_test[idx]
+elif config['exp_typ'] == 'bvp':
+    # filter incdices based on the labels
+    idx = np.where(y_test != 1) # removed gtcs
+    X_test = X_test[idx]
+    y_test = y_test[idx]
+elif config['exp_typ'] == 'bvs':
+    print('Baseline vs Seizure Experiment')
+    # baseline vs seizuer (so group all seizures as 1)
+    y_test = np.clip(y_test, 0, 1)
+else:
+    pass
+
+#%%
+# use sklearn minmax scaler to scale only the 3rd channel of data only
+from sklearn.preprocessing import MinMaxScaler
+scaler = MinMaxScaler(feature_range=(0, 1))
+for i in range(X_train.shape[0]):
+    ecg = X_train[i, 2, :].reshape(-1, 1)
+    ecg = scaler.fit_transform(ecg)
+    X_train[i, 2, :] = ecg.reshape(-1)
+for i in range(X_test.shape[0]):
+    ecg = X_test[i, 2, :].reshape(-1, 1)
+    ecg = scaler.fit_transform(ecg)
+    X_test[i, 2, :] = ecg.reshape(-1)
+
+#%%
+y_test = y_test.astype(np.float16).astype(str)
+
+# Combine training and testing data
+X, y, splits = combine_split_data([X_train, X_test], [y_train, y_test])
+
+print(X.shape, y.shape)
+#%%
+tfms = [None, [Categorize()]]
+dsets = TSDatasets(X, y, tfms=tfms, splits=splits, inplace=True)
+
+# Create DataLoaders with batch sizes from config
+dls = TSDataLoaders.from_dsets(
+    dsets.train,
+    dsets.valid,
+    bs=[config['batch_size_train'], config['batch_size_valid']],
+    # batch_tfms=[TSStandardize(by_sample=False, by_var=False)],
+    num_workers=0
+)
+
+# Optionally, display a batch
+dls.show_batch(sharey=False)
+print('Classes = ', dls.c, 'i.e.,', np.unique(y_train))
+# Initialize your model
+# model = DILVIT(num_classes=dls.c)
+model = InceptionTime(dls.vars, dls.c, fc_dropout=.5, nf=64)
+# model = TST(dls.vars, dls.c, dls.len, dropout=.3, fc_dropout=.5)
+# model = XCM(dls.vars, dls.c, dls.len, fc_dropout=.5, nf=64)
+
+# Define metrics with macro averaging
+precision = Precision(average='macro')
+recall = Recall(average='macro')
+f1 = F1Score(average='macro')
+
+# adamw = wrap_optimizer(torch.optim.AdamW)
+# Create Learner with callbacks
+learn = Learner(
+    dls,
+    model,
+    loss_func=CrossEntropyLossFlat(), # 
+    # loss_func=LabelSmoothingCrossEntropyFlat(),
+    metrics=[accuracy, precision, recall, f1],
+    
+    # opt_func=adamw,
+    # wd=0.01,
+    # cbs=cbs
+)
+
+#%%
+# Save initial model state
+learn.save(f'{config["chkpt_dir"]}{exp_name}_0')
+
+# Load the initial model state
+learn.load(f'{config["chkpt_dir"]}{exp_name}_0')
+
+# # Find optimal learning rate
+# learn.lr_find()
+
+# learn.lr_find(suggest_funcs=[minimum, steep, valley, slide])
+
+# adding augmentations before the lr_find creates an error
+# https://github.com/fastai/fastai/issues/3239
+learn.add_cbs(  
+                [ 
+                # WandbCallback(log='all',log_preds=False, log_model=False, dataset_name=config['dataset']),
+                # GradientClip(1.0), 
+                MixUp1d(0.4),
+                IntraClassCutMix1d(),
+                SaveModelCallback(monitor='f1_score',
+                                fname=f'{config["chkpt_dir"]}best_{exp_name}'),
+                EarlyStoppingCallback(monitor='f1_score', comp=np.greater, min_delta=0.0, patience=5)
+                ]
+            )
+
+# Train the model
+learn.fit_one_cycle(config['epochs'], lr_max=config['lr_max'])
+
+# Save the trained model
+learn.save(f'{config["chkpt_dir"]}{exp_name}_last')
+
+# load best mode
+# learn.load(f'{config["data_dir"]}best_{exp_name}')
+learn.remove_cbs([SaveModelCallback,
+                  WandbCallback
+                  , EarlyStoppingCallback])
+#%%
+learn.load(f'{config["chkpt_dir"]}best_{exp_name}')
+learn.validate(dl=dls.valid)
+#%%
+test_probas, test_targets, test_preds = learn.get_preds(dl=dls.valid, with_decoded=True)
+print(test_probas.shape, test_targets.shape, test_preds.shape)
+
+# calculate metrics and AUROC
+test_preds = test_preds.numpy()
+test_targets = test_targets.numpy()
+test_probas = test_probas.numpy()
+
+f1 = skm.f1_score(test_targets, test_preds, average='macro')
+if test_probas.shape[1] > 2:
+    auroc = skm.roc_auc_score(test_targets, test_probas, average='macro', multi_class='ovr')
+else:
+    auroc = skm.roc_auc_score(test_targets, test_probas[:,1], average='macro')
+recall = skm.recall_score(test_targets, test_preds, average='macro')
+precision = skm.precision_score(test_targets, test_preds, average='macro')
+accuracy = skm.accuracy_score(test_targets, test_preds)
+print(f'F1: {f1:.4f}, AUROC: {auroc:.4f}, Recall: {recall:.4f}, Precision: {precision:.4f}, Accuracy: {accuracy:.4f}')
+#%%
+from TSInterpret.InterpretabilityModels.Saliency.TSR import TSR
+xb, yb = dls.one_batch()
+
+# model.show_gradcam(eeg, trg)
+
+eeg = xb[0:1, :, 0:500].to('cpu')
+trg = yb[0:1].to('cpu')
+model = model.to('cpu')
+int_mod=TSR(model, 500, 19, method='GRAD',mode='feat')
+exp=int_mod.explain(eeg,labels=trg,TSR =True)
+int_mod.plot(np.array(eeg),exp, figsize=(20,50))
+# %%

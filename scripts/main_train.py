@@ -127,26 +127,31 @@ from sklearn.metrics import confusion_matrix, classification_report
 from models.utils.visualization import viz_pose, display_video
 from tsaug.visualization import plot
 from IPython.display import HTML
-from tools.inference import run_inference
 #%
-num_classes = len(config['sub_classes'])
-sub_classes = 1
+# num_classes = len(config['sub_classes'])
+# sub_classes = 1
+num_super_classes = len(config['super_classes'])
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 if config['num_fold'] < 0: # -1 means all folds
-    data = GEN_DATA_LISTS(config)
-    train_data = data.get_folds(-1)
+    data_gen = GEN_DATA_LISTS(config)
+    train_data = data_gen.get_folds(-1)
     
-    data = GEN_DATA_LISTS(config['external_data_dict'])
-    test_data = data.get_folds(-1)
+    class_weights = data_gen.calculate_class_weights(train_data, num_super_classes)
+    rprint(f"[bold cyan]Calculated class weights:[/] {class_weights}")
+
+    data_gen = GEN_DATA_LISTS(config['external_data_dict'])
+    test_data = data_gen.get_folds(-1)
 
 else:
-    data = GEN_DATA_LISTS(config)
-    train_data, test_data = data.get_folds(config['num_fold'])
+    data_gen = GEN_DATA_LISTS(config)
+    train_data, test_data = data_gen.get_folds(config['num_fold'])
 
 if config['sanity_check']:
-    data.chk_paths(train_data)
-    data.chk_paths(test_data)
+    data_gen.chk_paths(train_data)
+    data_gen.chk_paths(test_data)
+
+
 
 train_dataset = SlidingWindowMMELoader(train_data, config, augment=True)
 
@@ -158,7 +163,7 @@ train_loader = DataLoader(train_dataset,
                         )
 
 # get test dataset with 0 overlap
-config['window_overlap'] = 0
+# config['window_overlap'] = 0
 val_dataset = SlidingWindowMMELoader(test_data, config, augment=False)
 val_loader = DataLoader(val_dataset,
                         batch_size=config['batch_size'], shuffle=False,
@@ -252,10 +257,12 @@ else:
 
 scaler    = GradScaler()
 
-trainer   = Trainer(model, optimizer, scaler, cfg=config)
+trainer   = Trainer(model, optimizer, scaler, cfg=config, class_weights=class_weights)
 evaluator = Evaluator(model)
 #%%
 best_val_fusion = 0.0
+
+encoders_frozen_status = {name: False for name in config.get('recall_thresholds', {}).keys()}
 
 for epoch in range(config['epochs']):
     # TRAIN
@@ -267,6 +274,35 @@ for epoch in range(config['epochs']):
     val_f1 = {}
     if (epoch + 1) % config['val_every'] == 0:
         val_f1 = evaluator.validate(val_loader, epoch)
+        #—————— Feezing encoders based on recall thresholds——————
+        # freezing should be done after atleast 10 epochs of training
+        if (epoch+1) < 5:
+            print(f"Skipping encoder freezing in epoch {epoch+1} as it requires at least 10 epochs of training.")
+        else:
+            for modality_name, threshold in config.get('recall_thresholds', {}).items():
+                if modality_name in val_f1 and not encoders_frozen_status[modality_name]:
+                    current_recall = val_f1[modality_name]
+                    if current_recall >= threshold:
+                        rprint(f"[bold yellow]Validation recall for {modality_name} ({current_recall:.4f}) reached threshold ({threshold:.2f}). Freezing encoder(s).[/bold yellow]")
+                        module_prefixes_to_freeze = config.get('encoder_module_names', {}).get(modality_name, [])
+                        
+                        if not module_prefixes_to_freeze:
+                            rprint(f"[bold red]Warning: No module names defined in config['encoder_module_names'] for freezing modality {modality_name}[/bold red]")
+                            continue
+
+                        frozen_count = 0
+                        for param_name, param in model.named_parameters():
+                            for prefix in module_prefixes_to_freeze:
+                                if param_name.startswith(prefix):
+                                    if param.requires_grad:
+                                        param.requires_grad = False
+                                        frozen_count += 1
+                        if frozen_count > 0:
+                            rprint(f"[bold yellow]Froze {frozen_count} parameters for {modality_name} encoder(s): {', '.join(module_prefixes_to_freeze)}[/bold yellow]")
+                        
+                        encoders_frozen_status[modality_name] = True
+                        trainer.update_frozen_status(encoders_frozen_status)
+
         fusion_f1 = val_f1['fusion']
         if fusion_f1 > best_val_fusion:
             best_val_fusion = fusion_f1
@@ -303,79 +339,3 @@ for epoch in range(config['epochs']):
 if config['LOG_WANDB']:
     wandb.finish()
 #%%
-# load the best checkpoint
-chkpt_path = os.path.join(
-    config['checkpoint_path'],
-    # f"{config['experiment_name']}_fold_{config['num_fold']}.pth"
-    'alfred_cv_full_fusion_ce_margin_jsd_lossv15.pth'
-    )
-load_chkpt(model, optimizer, chkpt_path)
-#%%
-from tools.infer_eval import SeizureEvaluator, run_inference_with_evaluation
-# example_evaluation_pipeline
-
-
-# After training loop, add evaluation
-print("\nStarting comprehensive evaluation...")
-# Initialize evaluator with your config parameters
-evaluator = SeizureEvaluator(
-    window_duration=config['sample_duration'],
-    overlap=config['window_overlap'], 
-    sampling_rate=1.0,
-    min_seizure_duration=5.0,
-    min_overlap_ratio=0.1
-)
-
-# Run evaluation on validation set
-evaluation_results = run_inference_with_evaluation(
-    model=model,
-    dataloader=val_loader,
-    evaluator=evaluator,
-    device=DEVICE,
-    save_results=True,
-    results_dir=f"results/{config['experiment_name']}_fold_{config['num_fold']}/"
-)
-
-# Print final evaluation metrics
-print("\nFinal Evaluation Metrics (Window-Level):")
-print(f"Sensitivity: {evaluation_results['window_level'].sensitivity:.4f}")
-print(f"Specificity: {evaluation_results['window_level'].specificity:.4f}")
-print(f"F1 Score: {evaluation_results['window_level'].f1_score:.4f}")
-print(f"AUROC: {evaluation_results['window_level'].auroc:.4f}")
-print(f"Cohen Kappa: {evaluation_results['window_level'].cohen_kappa:.4f}")
-
-# Print event-level metrics for best aggregation method
-best_method = 'average'  # or choose based on validation performance
-event_results = evaluation_results['event_level'][best_method]
-
-print("\nFinal Evaluation Metrics (Event-Level):")
-print(f"Sensitivity: {event_results['results'].sensitivity:.4f}")
-print(f"Precision: {event_results['results'].precision:.4f}")
-print(f"F1 Score: {event_results['results'].f1_score:.4f}")
-print(f"False Positives per Hour: {event_results['per_file']['summary']['fp_per_hour']:.4f}")
-
-print("Evaluation complete!")
-
-#%%
-# Log final evaluation metrics to wandb if enabled
-if config['LOG_WANDB']:
-    # Log window-level metrics
-    wandb.log({
-        "final_eval/window_sensitivity": evaluation_results['window_level'].sensitivity,
-        "final_eval/window_specificity": evaluation_results['window_level'].specificity,
-        "final_eval/window_f1": evaluation_results['window_level'].f1_score,
-        "final_eval/window_auroc": evaluation_results['window_level'].auroc,
-        "final_eval/window_kappa": evaluation_results['window_level'].cohen_kappa,
-    })
-    
-    # Log event-level metrics for best aggregation method
-    best_method = 'average'  # or choose based on validation performance
-    event_results = evaluation_results['event_level'][best_method]
-    wandb.log({
-        "final_eval/event_sensitivity": event_results['results'].sensitivity,
-        "final_eval/event_precision": event_results['results'].precision,
-        "final_eval/event_f1": event_results['results'].f1_score,
-        "final_eval/fp_per_hour": event_results['per_file']['summary']['fp_per_hour'],
-    })
-
-print("Evaluation complete!")

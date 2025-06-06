@@ -130,6 +130,25 @@ class MME_Model(nn.Module):
                              num_sub_classes=self.num_classes,
                              type = self.fusion_type)
 
+        # For handling frozen encoder feature dropout
+        self.encoders_frozen_status = {} # Expected: {'flow': False, 'ecg': False, 'pose': False}
+        self.frozen_feature_dropout_rate = 0.0
+        self.feature_dropout_layer = nn.Dropout(p=0.0) # Dropout layer, p will be updated
+        
+    def update_frozen_status(self, frozen_status: dict, dropout_rate: float):
+        """
+        Called by Trainer to update the model's knowledge of frozen encoders
+        and the dropout rate to apply to their features.
+        """
+        self.encoders_frozen_status = frozen_status
+        if self.training: # Only apply dropout during training
+            self.frozen_feature_dropout_rate = dropout_rate
+            self.feature_dropout_layer.p = dropout_rate
+        else: # Ensure no dropout during evaluation
+            self.frozen_feature_dropout_rate = 0.0
+            self.feature_dropout_layer.p = 0.0
+        print(f"[MME_Model] Updated frozen status: {self.encoders_frozen_status}, Dropout p: {self.feature_dropout_layer.p}")
+
     def forward(self, frames, body, face, rh, lh, ecg):
         # frames = [B, C, T, H, W]
         # body = [B, M, T, V, C]
@@ -141,7 +160,7 @@ class MME_Model(nn.Module):
         # super_lbls = [B, N]
 
         # Slowfast
-        of_cls_score, self.of_feats_raw = self.slowfast(frames)
+        of_cls_score, of_feats_raw = self.slowfast(frames)
         # Body GCN
         body_cls_score, body_feats_raw = self.bodygcn(body)
         # Face GCN
@@ -151,18 +170,29 @@ class MME_Model(nn.Module):
         # Left Hand GCN
         lhand_cls_score, lhand_feats_raw = self.lhgcn(lh)
         # ECG
-        ecg_cls_score, self.ecg_feats_raw = self.ewt(ecg)
+        ecg_cls_score, ecg_feats_raw = self.ewt(ecg)
         
+        if self.training and self.frozen_feature_dropout_rate > 0:
+            if self.encoders_frozen_status.get('flow', False):
+                of_feats_raw = self.feature_dropout_layer(of_feats_raw)
+            if self.encoders_frozen_status.get('ecg', False): # If ECG can also be frozen
+                ecg_feats_raw = self.feature_dropout_layer(ecg_feats_raw)
+            if self.encoders_frozen_status.get('pose', False): # If pose can be frozen
+                body_feats_raw = self.feature_dropout_layer(body_feats_raw)
+                face_feats_raw = self.feature_dropout_layer(face_feats_raw)
+                rhand_feats_raw = self.feature_dropout_layer(rhand_feats_raw)
+                lhand_feats_raw = self.feature_dropout_layer(lhand_feats_raw)
+                
 
-        of_feats = self.norm_of(self.of_feats_raw)
+        self.of_feats = self.norm_of(of_feats_raw)
         body_feats = self.norm_body(body_feats_raw)
         face_feats = self.norm_face(face_feats_raw)
         rhand_feats = self.norm_rhand(rhand_feats_raw)
         lhand_feats = self.norm_lhand(lhand_feats_raw)
-        ecg_feats = self.norm_ecg(self.ecg_feats_raw)
+        self.ecg_feats = self.norm_ecg(ecg_feats_raw)
         # Fusion
         fusion_cls_score, pose_scores = self.fusion(body_feats, face_feats, rhand_feats, lhand_feats,
-                                                    ecg_feats, of_feats,
+                                                    self.ecg_feats, self.of_feats,
                                                     self.pose_batch_edge_index, self.pose_batch_vector,
                                                     self.batch_edge_index, self.batch_edge_types)
 
