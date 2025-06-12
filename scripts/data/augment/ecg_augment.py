@@ -55,7 +55,7 @@ def drift_selected_channels(ecg: np.ndarray,
 
 # Example usage inside your Dataset’s augment block:
 
-AUGMENTATIONS = [
+AUGMENTATIONS_HRV = [
     lambda e: tsaug.AddNoise(scale=(0.01, 0.02)).augment(e),
     lambda e: drift_selected_channels(e, max_drift=0.3, n_drift_points=3),
     lambda e: tsaug.Dropout(p=(0.05, 0.15), size=(100, 150), fill=0.).augment(e),
@@ -64,8 +64,36 @@ AUGMENTATIONS = [
     lambda e: drop_random_channels(e, n_drop_choices=(1, 3)),
 ]
 
-def apply_hrv_augmentation(ecg, p=0.7):
+def apply_hrv_augmentation(hrv, p=0.7):
     if random.random() < p:
-        return random.choice(AUGMENTATIONS)(ecg)
+        return random.choice(AUGMENTATIONS_HRV)(hrv)
+    else:
+        return hrv
+
+AUGMENTATIONS_EEG = [
+    lambda e: tsaug.AddNoise(scale=(0.01, 0.02)).augment(e),
+    lambda e: tsaug.Dropout(p=(0.05, 0.15), size=(100, 150), fill=0.).augment(e),
+    lambda e: tsaug.Dropout(p=(0.01, 0.02),   size=(1,   5),   fill=0.).augment(e),
+    lambda e: tsaug.Pool(size=(1, 3)).augment(e),
+    lambda e: drop_random_channels(e, n_drop_choices=(1, 3)),
+]
+
+def apply_eeg_augmentation(eeg, p=0.7):
+    if random.random() < p:
+        return random.choice(AUGMENTATIONS_EEG)(eeg)
+    else:
+        return eeg
+
+
+AUGMENTATIONS_ECG = [
+    lambda e: tsaug.AddNoise(scale=(0.01, 0.02)).augment(e),
+    lambda e: tsaug.Dropout(p=(0.05, 0.15), size=(100, 150), fill=0.).augment(e),
+    lambda e: tsaug.Dropout(p=(0.01, 0.02),   size=(1,   5),   fill=0.).augment(e),
+    lambda e: tsaug.Pool(size=(1, 3)).augment(e),
+]
+
+def apply_ecg_augmentation(ecg, p=0.7):
+    if random.random() < p:
+        return random.choice(AUGMENTATIONS_ECG)(ecg)
     else:
         return ecg

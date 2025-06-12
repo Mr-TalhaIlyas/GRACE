@@ -8,9 +8,9 @@ from sklearn.metrics import (
     average_precision_score,
     cohen_kappa_score
 )
-from tools.eval_utils import (apply_temporal_smoothing_probs,
-                              apply_temporal_smoothing_preds,
-                              hysteresis_thresholding,)
+from evals.tools.eval_utils import (apply_temporal_smoothing_probs,
+                                            apply_temporal_smoothing_preds,
+                                            hysteresis_thresholding,)
 from MLstatkit.stats import Bootstrapping, Delong_test
 
 def compute_kappas_and_delta(rater1, rater2, rater3):
@@ -245,7 +245,11 @@ def calculate_epoch_level_metrics_extended(
         kappa_ci_dict[modality] = kappa_ci
 
     # Delta kappa: compare fusion ("fusion_outputs") vs every other modality
-    fusion_mod = 'fusion_outputs'
+    if 'fusion_outputs' in all_preds.keys():
+        fusion_mod = 'fusion_outputs'
+    else:
+        fusion_mod = modalities[0]  # Fallback to first modality
+        print(f"Error: 'fusion_outputs' modality not found in all_preds.\n Falling back to {modalities[0]}")
     # Prepare fusion preds
     fusion_preds = hysteresis_thresholding(all_probs[fusion_mod], 0.8, 0.2, only_pos_probs=True)
     fusion_preds = apply_temporal_smoothing_preds(fusion_preds, 5)

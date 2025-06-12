@@ -12,7 +12,7 @@ config = dict(
                 ema_momentum = 0.999,
                 sanity_check = False,
                 project_name= 'NPJ',
-                experiment_name= 'alfred_cv_full_fusion_ce_margin_jsd_lossv17_3i',
+                experiment_name= 'alfred_cv_full_fusion_ce_margin_jsd_lossv18ema',
 
                 log_directory= "/home/user01/Data/npj/logs/",
                 checkpoint_path= "/home/user01/Data/npj/chkpts/",
@@ -33,6 +33,12 @@ config = dict(
                     'lbl_dir': '/home/user01/Data/npj/datasets/alfred/external/labels/',
                 },
 
+                # TUH DATASET
+                tuh_data_dir = '/home/user01/Data/npj/datasets/tuh/',
+                # SeizeIT2 DATASET
+                seizeit2_data_dir = '/home/user01/Data/npj/datasets/seizeit2/',
+                # BioSignal Chkpts base directory
+                bio_signal_chkpts_dir = '/home/user01/Data/npj/scripts/ts/chkpt/',
                 pin_memory=  True,
                 num_workers= 12,# 2,,6
 
@@ -42,7 +48,7 @@ config = dict(
                 batch_size= 1,
 
                 # learning rate
-                learning_rate= 0.0001, # 0.001
+                learning_rate= 0.000001, # 0.001
                 pose_lr_multiplier= 0.5,#0.1,
                 lr_schedule= 'cos', # cos cyclic
                 max_lr = 0.0001, # e.g., max_lr will be 6x base_lr for each group
@@ -62,8 +68,10 @@ config = dict(
                 video_fps = 30, # FPS
                 ecg_freq = 250, # Hz
                 sample_duration = 10, # in seconds from [3,5,7,10]
-                window_overlap = 0, # in seconds
+                window_overlap = 5, # in seconds
 
+                flow_frames = 48,
+                pose_frames = 150,
                 video_height= 224,
                 video_width= 224,
                 # sampling distribution
@@ -76,14 +84,14 @@ config = dict(
                 # super_classes = ['baseline', 'gtcs', 'pnes'],
                 super_classes = ['baseline', 'seizure'],
                 
-                LABEL_MAP_TUH = {"fnsz": 1,#0,
-                                 "tcsz": 1,#1,
-                                 "nesz": 1,#2,
-                                 "bckg": 0,#-1
+                LABEL_MAP_TUH = {"fnsz": 0,
+                                 "tcsz": 1,
+                                 "nesz": 2,
+                                 "bckg": -1
                                  },
-                LABEL_MAP_SeizeIT2 = {"sz_foc_f2b": 1,#0,
-                                      "sz_gen_m_tonicClonic": 1,#1,
-                                      "bckg": 0,#-1
+                LABEL_MAP_SeizeIT2 = {"sz_foc_f2b": 0,
+                                      "sz_gen_m_tonicClonic": 1,
+                                      "bckg": -1
                                       },
                 # ECG CWT settings
                 steps = 128,

@@ -2,6 +2,22 @@ from termcolor import cprint
 import torch, os
 from configs.config import config
 
+def save_ema_chkpts(model, trainer, epoch=0, loss=0, acc=0, return_chkpt=False):
+    chkpt_data = {
+                'epoch': epoch + 1,
+                'model_state_dict': model.state_dict(), # Base model parameters
+                # 'optimizer_state_dict': optimizer.state_dict(),
+                # 'scaler_state_dict': scaler.state_dict(),
+                'ema_state_dict': trainer.ema_model.state_dict(), # EMA shadow parameters and state
+                'acc': acc,
+                'loss': loss,
+                'config': config # Optional: save config
+            }
+    torch.save(chkpt_data, os.path.join(config["checkpoint_path"], f'{config["experiment_name"]}_ema.pth'))
+    cprint('-> Saving EMA checkpoint', 'green')
+    if return_chkpt:
+        return os.path.join(config["checkpoint_path"], f'{config["experiment_name"]}_ema.pth')
+    
 def save_chkpt(model, optimizer, epoch=0, loss=0, acc=0, return_chkpt=False):
     cprint('-> Saving checkpoint', 'green')
     torch.save({

@@ -358,28 +358,17 @@ def plot_model_comparison(
         fig.savefig(f"{save_dir}/modality_comparison.png", bbox_inches='tight')
     return fig
 
-def draw_temporal_seizure_plots(all_preds, all_probs, all_targets, eval_config):
-    r = all_probs['fusion_outputs']
-    fusion = apply_temporal_smoothing_probs(r, 5)
-
-    p = all_probs['ecg_outputs']
-    ecg = apply_temporal_smoothing_probs(p, 3)
-
-    p = all_probs['flow_outputs']
-    flow = apply_temporal_smoothing_probs(p, 3)
-
-    p = all_probs['joint_pose_outputs']
-    pose = apply_temporal_smoothing_probs(p, 3)
+def draw_temporal_seizure_plots(all_targets, probs_list, labels_list, eval_config, threshold=0.7):
 
     fig = plot_model_comparison(
         ground_truth=all_targets,
-        model_probs_list=[fusion, ecg, flow, pose],
-        model_names=['Fusion', 'ECG','Flow', 'Pose'],
+        model_probs_list=probs_list,
+        model_names=labels_list,
         interval_sec=10,
         time_unit="auto",
         figsize=None,
         colors=None,#["tab:blue", "tab:green", "tab:orange", "tab:cyan"],
-        threshold=0.7,
+        threshold=threshold,
         seizure_color="red",
         seizure_alpha=0.2,
         yticks=True,

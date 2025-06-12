@@ -14,18 +14,21 @@ mme = dict(
             num_persons=1,
             backbone_in_channels=3,
             head_in_channels=256,
-            body_pretrainned_chkpts= f"{pretrained_root_dir}gcn_body_17kpts_kinetic400.pth",
-            hand_pretrainned_chkpts= f"{pretrained_root_dir}gcn_hand_21kpts_fphad45.pth",
+            # gcn_body_17kpts_kinetic400
+            # gcn_hand_21kpts_fphad45
+            body_pretrainned_chkpts= None,#f"{pretrained_root_dir}ctrgcn_body_17kpts.pth",
+            hand_pretrainned_chkpts= None,#f"{pretrained_root_dir}gcn_hand_21kpts_fphad45.pth",
             face_pretrainned_chkpts= None,
 
             ewt_head_ch = 768,
             mod_feats = 512,
             ewt_dropout_ratio = 0.3,
-            ewt_pretrainned_chkpts=f'{pretrained_root_dir}ecg_vit_fold1flip.pth',
+            # ecg_vit_fold1flip
+            ewt_pretrainned_chkpts=None,#f'{pretrained_root_dir}best_tuh_ecgH_bvg_InceptionTime.pth',
 
             # INceptionTime
             hrv_channels=19,
-            incep_num_features=512,
+            incep_num_features=256,
             
             xcm_num_features=128,
             # GTN dual branch
@@ -36,7 +39,7 @@ mme = dict(
             gtn_num_layers = 8,
 
             
-            fusion_in_channels = 512,
+            fusion_in_channels = 512, # inception time has best on 256
             fusion_heads = 16,
             # DROPOUTS
             flow_dropout=0.5,

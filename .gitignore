@@ -24,6 +24,6 @@ __pycache__/
 *.xlsx
 *.pdf
 *.joblib
-
+hacks.py
 
 .gitignore

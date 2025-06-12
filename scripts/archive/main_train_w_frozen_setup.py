@@ -119,7 +119,7 @@ from data.utils import collate, values_fromreport, print_formatted_table
 from models.model import MME_Model
 from torch.optim.lr_scheduler import CyclicLR
 from models.utils.lr_scheduler import LR_Scheduler
-from models.utils.tools import save_chkpt, load_chkpt, save_ema_chkpts
+from models.utils.tools import save_chkpt, load_chkpt
 from tools.training_v6 import Trainer, Evaluator
 
 from sklearn.metrics import confusion_matrix, classification_report
@@ -162,10 +162,11 @@ train_loader = DataLoader(train_dataset,
                         prefetch_factor=2, persistent_workers=True,
                         )
 
-
+# get test dataset with 0 overlap
+# config['window_overlap'] = 0
 val_dataset = SlidingWindowMMELoader(test_data, config, augment=False)
 val_loader = DataLoader(val_dataset,
-                        batch_size=config['batch_size'], shuffle=True,
+                        batch_size=config['batch_size'], shuffle=False,
                         num_workers=config['num_workers'], drop_last=True,
                         collate_fn=None, pin_memory=config['pin_memory'],
                         prefetch_factor=2, persistent_workers=True,
@@ -245,8 +246,7 @@ if config['lr_schedule'] == 'cyclic':
                          step_size_up=step_size_up_iters,
                          mode=config['clr_mode'],
                          cycle_momentum=False) 
-    print(f"Using PyTorch CyclicLR: base_lrs=[{base_lr_main:.1e}, {base_lr_pose:.1e}],\
-          max_lrs=[{max_lr_main:.1e}, {max_lr_pose:.1e}], step_up_iters={step_size_up_iters}")
+    print(f"Using PyTorch CyclicLR: base_lrs=[{base_lr_main:.1e}, {base_lr_pose:.1e}], max_lrs=[{max_lr_main:.1e}, {max_lr_pose:.1e}], step_up_iters={step_size_up_iters}")
 else:
     # Fallback to your custom scheduler for 'cos', 'poly', 'step'
     scheduler = LR_Scheduler(config['lr_schedule'],
@@ -262,26 +262,52 @@ evaluator = Evaluator(model)
 #%%
 best_val_fusion = 0.0
 
+encoders_frozen_status = {name: False for name in config.get('recall_thresholds', {}).keys()}
+
 for epoch in range(config['epochs']):
-    # ——————TRAIN——————
+    # TRAIN
     train_loss, train_accs, loss_breakdown = trainer.train_epoch(
         train_loader, epoch, scheduler
     )
 
-    # ——————VALIDATE——————
+    # VALIDATE
     val_f1 = {}
     if (epoch + 1) % config['val_every'] == 0:
-        # val_f1 = evaluator.validate(val_loader, epoch)
-        with trainer.ema_model.average_parameters(): # Temporarily loads EMA parameters into model
-            val_f1 = evaluator.validate(val_loader, epoch)
-        
+        val_f1 = evaluator.validate(val_loader, epoch)
+        #—————— Feezing encoders based on recall thresholds——————
+        # freezing should be done after atleast 10 epochs of training
+        if (epoch+1) < 5:
+            print(f"Skipping encoder freezing in epoch {epoch+1} as it requires at least 10 epochs of training.")
+        else:
+            for modality_name, threshold in config.get('recall_thresholds', {}).items():
+                if modality_name in val_f1 and not encoders_frozen_status[modality_name]:
+                    current_recall = val_f1[modality_name]
+                    if current_recall >= threshold:
+                        rprint(f"[bold yellow]Validation recall for {modality_name} ({current_recall:.4f}) reached threshold ({threshold:.2f}). Freezing encoder(s).[/bold yellow]")
+                        module_prefixes_to_freeze = config.get('encoder_module_names', {}).get(modality_name, [])
+                        
+                        if not module_prefixes_to_freeze:
+                            rprint(f"[bold red]Warning: No module names defined in config['encoder_module_names'] for freezing modality {modality_name}[/bold red]")
+                            continue
+
+                        frozen_count = 0
+                        for param_name, param in model.named_parameters():
+                            for prefix in module_prefixes_to_freeze:
+                                if param_name.startswith(prefix):
+                                    if param.requires_grad:
+                                        param.requires_grad = False
+                                        frozen_count += 1
+                        if frozen_count > 0:
+                            rprint(f"[bold yellow]Froze {frozen_count} parameters for {modality_name} encoder(s): {', '.join(module_prefixes_to_freeze)}[/bold yellow]")
+                        
+                        encoders_frozen_status[modality_name] = True
+                        trainer.update_frozen_status(encoders_frozen_status)
+
         fusion_f1 = val_f1['fusion']
         if fusion_f1 > best_val_fusion:
             best_val_fusion = fusion_f1
-            # chkpt = save_chkpt(model, optimizer, epoch, loss=np.nanmean(train_loss),
-            #                     acc=fusion_f1, return_chkpt=True)
-            chkpt = save_ema_chkpts(model, trainer, epoch, loss=np.nanmean(train_loss),
-                                    acc=fusion_f1, return_chkpt=True)
+            chkpt = save_chkpt(model, optimizer, epoch, loss=np.nanmean(train_loss),
+                                acc=fusion_f1, return_chkpt=True)
             
     # —————— LOG METRICS ——————
     if config['LOG_WANDB']:

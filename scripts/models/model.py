@@ -97,7 +97,9 @@ class MME_Model(nn.Module):
         #                 pretrained_path=config['ewt_pretrainned_chkpts'])
         # self.ewt = DILVIT(pretrained_path=config['ewt_pretrainned_chkpts'])
         # self.ewt = InceptionTime(c_in=config['hrv_channels'], c_out=self.sup_classes,
-        #                          fc_dropout=config['ecg_dropout'], nf=config['fusion_in_channels']//4)
+        #                          fc_dropout=config['ecg_dropout'], nf=config['fusion_in_channels']//4,
+        #                          return_features=True,
+        #                          pretrained_path=config['ewt_pretrainned_chkpts'])
         # self.ewt = GTN(d_model=config['d_model_emb'], d_input=config['d_input_T'],
         #                 d_channel=config['hrv_channels'],
         #                 d_output=self.sup_classes,

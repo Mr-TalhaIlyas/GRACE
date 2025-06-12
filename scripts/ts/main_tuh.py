@@ -28,7 +28,7 @@ from augs import ExclusiveMixer
 from dilvit import DILVIT
 from timemil import TimeMIL
 #%%
-exp_name = 'ecg_bvg_InceptionTime' 
+exp_name = 'tuh_ecgH_bvg_InceptionTime' 
 # Define your configuration for wandb
 config = {
     'batch_size_train': 64,#64, 8 
@@ -36,11 +36,10 @@ config = {
     'lr_max': 1e-5,
     'epochs': 100,
     'architecture': 'InceptionTime',
-    'dataset': 'ALFRED',
-    'data_dir': '/home/user01/Data/npj/datasets/alfred/ts_analysis/',
+    'data_dir': '/home/user01/Data/npj/datasets/tuh/ts_analysis/',
     'chkpt_dir': '/home/user01/Data/npj/scripts/ts/chkpt/',
     'log_dir': '/home/user01/Data/npj/scripts/ts/logs/',
-    'exp_typ': 'bvg', # bvp, gvp, bvg None bvs
+    'exp_typ': 'hrv', # hrv, eeg ecg
     # Add any other parameters you'd like to track
 }
 
@@ -48,74 +47,42 @@ config = {
 # wandb.init(dir=config['log_dir'], project="ALFRED_EEG", name = exp_name, config=config)
 
 # Load your data
-data = joblib.load(f'{config["data_dir"]}Alfred_ecgH_full_w10_o5.joblib')
+data = joblib.load(f'{config["data_dir"]}TUHv152_ecgH_full_w10_o5.joblib')
 
-X_train = data['train_data'][:,1:2,:]
-y_train = data['train_label']
-
-if config['exp_typ'] == 'gvp':
-    # filter incdices based on the labels
-    idx = np.where(y_train != 0) # removed basline
-    X_train = X_train[idx]
-    y_train = y_train[idx] - 1 # to make it 0 based
-elif config['exp_typ'] == 'bvg':
-    # filter incdices based on the labels
-    idx = np.where(y_train != 2) # removed pnes
-    X_train = X_train[idx]
-    y_train = y_train[idx]
-elif config['exp_typ'] == 'bvp':
-    # filter incdices based on the labels
-    idx = np.where(y_train != 1) # removed gtcs
-    X_train = X_train[idx]
-    y_train = y_train[idx]
-elif config['exp_typ'] == 'bvs':
-    print('Baseline vs Seizure Experiment')
-    # baseline vs seizuer (so group all seizures as 1)
-    y_train = np.clip(y_train, 0, 1)
+if config['exp_typ'] == 'ecg':
+    X_train = data['train_data'][:,1:2,:]
 else:
-    pass
+    X_train = data['train_data']
+y_train = data['train_label']
+y_train = np.clip(y_train, 0, 1) # ensure binary classification
+
 y_train = y_train.astype(np.float16).astype(str)
 
-X_test = data['test_data'][:,1:2,:]
-y_test = data['test_label']
-
-if config['exp_typ'] == 'gvp':
-    # filter incdices based on the labels
-    idx = np.where(y_test != 0) # removed basline
-    X_test = X_test[idx]
-    y_test = y_test[idx] - 1 # to make it 0 based
-elif config['exp_typ'] == 'bvg':
-    # filter incdices based on the labels
-    idx = np.where(y_test != 2) # removed pnes
-    X_test = X_test[idx]
-    y_test = y_test[idx]
-elif config['exp_typ'] == 'bvp':
-    # filter incdices based on the labels
-    idx = np.where(y_test != 1) # removed gtcs
-    X_test = X_test[idx]
-    y_test = y_test[idx]
-elif config['exp_typ'] == 'bvs':
-    print('Baseline vs Seizure Experiment')
-    # baseline vs seizuer (so group all seizures as 1)
-    y_test = np.clip(y_test, 0, 1)
+if config['exp_typ'] == 'ecg':
+    X_test = data['test_data'][:,1:2,:]
 else:
-    pass
+    X_test = data['test_data']
+y_test = data['test_label']
+y_test = np.clip(y_test, 0, 1) # ensure binary classification
 
-#%%
-# use sklearn minmax scaler to scale only the 3rd channel of data only
-# from sklearn.preprocessing import MinMaxScaler
-# scaler = MinMaxScaler(feature_range=(0, 1))
-# for i in range(X_train.shape[0]):
-#     ecg = X_train[i, 2, :].reshape(-1, 1)
-#     ecg = scaler.fit_transform(ecg)
-#     X_train[i, 2, :] = ecg.reshape(-1)
-# for i in range(X_test.shape[0]):
-#     ecg = X_test[i, 2, :].reshape(-1, 1)
-#     ecg = scaler.fit_transform(ecg)
-#     X_test[i, 2, :] = ecg.reshape(-1)
-
-#%%
 y_test = y_test.astype(np.float16).astype(str)
+
+#%%
+if config['exp_typ'] == 'hrv':
+# use sklearn minmax scaler to scale only the 3rd channel of data only
+    from sklearn.preprocessing import MinMaxScaler
+    scaler = MinMaxScaler(feature_range=(0, 1))
+    for i in range(X_train.shape[0]):
+        ecg = X_train[i, 2, :].reshape(-1, 1)
+        ecg = scaler.fit_transform(ecg)
+        X_train[i, 2, :] = ecg.reshape(-1)
+    for i in range(X_test.shape[0]):
+        ecg = X_test[i, 2, :].reshape(-1, 1)
+        ecg = scaler.fit_transform(ecg)
+        X_test[i, 2, :] = ecg.reshape(-1)
+
+#%%
+
 
 # # Combine training and testing data
 X, y, splits = combine_split_data([X_train, X_test], [y_train, y_test])
@@ -141,7 +108,7 @@ print('Classes = ', dls.c, 'i.e.,', np.unique(y_train))
 model = InceptionTime(dls.vars, dls.c, fc_dropout=.5, nf=64)
 # model = TST(dls.vars, dls.c, dls.len, dropout=.3, fc_dropout=.5)
 # model = XCM(dls.vars, dls.c, dls.len, fc_dropout=.5, nf=64)
-# model = ConvTranPlus(dls.vars, dls.c, dls.len, fc_dropout=.5)
+# model = TimeMIL(in_features=dls.vars, n_classes=dls.c, mDim=128, max_seq_len=2500)
 
 # Define metrics with macro averaging
 precision = Precision(average='macro')
@@ -163,13 +130,7 @@ learn = Learner(
 )
 
 #%%
-# Save initial model state
-learn.save(f'{config["chkpt_dir"]}{exp_name}_0')
-
-# Load the initial model state
-learn.load(f'{config["chkpt_dir"]}{exp_name}_0')
-
-# # Find optimal learning rate
+# Find optimal learning rate
 learn.lr_find()
 
 # learn.lr_find(suggest_funcs=[minimum, steep, valley, slide])
@@ -206,6 +167,7 @@ learn.remove_cbs([SaveModelCallback,
 #%%
 learn.load(f'{config["chkpt_dir"]}best_{exp_name}')
 learn.validate(dl=dls.valid)
+print(f'Loaded best model from {config["chkpt_dir"]}best_{exp_name}')
 #%%
 test_probas, test_targets, test_preds = learn.get_preds(dl=dls.valid, with_decoded=True)
 print(test_probas.shape, test_targets.shape, test_preds.shape)
@@ -224,16 +186,5 @@ recall = skm.recall_score(test_targets, test_preds, average='weighted')
 precision = skm.precision_score(test_targets, test_preds, average='weighted')
 accuracy = skm.accuracy_score(test_targets, test_preds)
 print(f'F1: {f1:.4f}, AUROC: {auroc:.4f}, Recall: {recall:.4f}, Precision: {precision:.4f}, Accuracy: {accuracy:.4f}')
-#%%
-# from TSInterpret.InterpretabilityModels.Saliency.TSR import TSR
-# xb, yb = dls.one_batch()
 
-# # model.show_gradcam(eeg, trg)
-
-# eeg = xb[0:1, :, 0:500].to('cpu')
-# trg = yb[0:1].to('cpu')
-# model = model.to('cpu')
-# int_mod=TSR(model, 500, 19, method='GRAD',mode='feat')
-# exp=int_mod.explain(eeg,labels=trg,TSR =True)
-# int_mod.plot(np.array(eeg),exp, figsize=(20,50))
 # %%

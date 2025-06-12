@@ -415,7 +415,7 @@ class PoseCTGCN(nn.Module):
         chkpt = torch.load(checkpoint_path, map_location=torch.device('cpu'))
         try:
             # load pretrained
-            del chkpt['state_dict']['backbone.A'] # delete the saved adjacency matrix 
+            # del chkpt['state_dict']['backbone.A'] # delete the saved adjacency matrix 
             pretrained_dict = chkpt['state_dict']
         except KeyError:
             # load pretrained
@@ -431,7 +431,7 @@ class PoseCTGCN(nn.Module):
             pk, pv = i # pretrained state dictionary
             nk, nv = j # new state dictionary
             # if name and weight shape are same
-            if pk.strip('backbone.') == nk and pv.shape == nv.shape: #.strip('backbone.')
+            if pk == nk or pv.shape == nv.shape: #.strip('backbone.')
                 new_dict[nk] = pv
                 matched.append(pk)
             else:
@@ -462,12 +462,12 @@ class PoseCTGCN(nn.Module):
 # model = PoseCTGCN(num_classes=60, num_persons=1, sup_classes=2,
                 
 #                 backbone_in_channels=3, head_in_channels=256,
-#                 num_nodes=graph.num_nodes_hand, inward_edges=graph.hand_inward_edges,
+#                 num_nodes=graph.coco_num_node, inward_edges=graph.coco_inward_edges,
 #                 dropout=0.2,
 #                  fusion_in_channels=512,
-#                 )
+#                 checkpoint_path='/home/user01/Data/npj/scripts/models/pretrained/ctrgcn_body_17kpts.pth')
 
-# inputs = torch.randn(5, 1, 150, 21, 3)
+# inputs = torch.randn(5, 1, 100, 17, 3)
 # output = model(inputs)
 # print(output[0].shape, output[1].shape)
 #%%

@@ -11,6 +11,7 @@ torch.autograd.set_detect_anomaly(False)
 from configs.config import config
 from data.utils import video_transform
 from models.utils.loss import get_loss   # or use nn.CrossEntropyLoss
+from torch_ema import ExponentialMovingAverage
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -24,6 +25,7 @@ class Trainer:
         self.cfg = cfg
         self.class_weights = class_weights.to(DEVICE) if class_weights is not None else None
 
+        self.ema_model = ExponentialMovingAverage(self.model.parameters(), decay=0.999)
         # Loss function
         self.loss_fn = nn.CrossEntropyLoss(weight=self.class_weights) # Or your custom get_loss
         self.fusion_loss_fn_smooth = nn.CrossEntropyLoss(weight=self.class_weights, label_smoothing=0.1)
@@ -147,7 +149,7 @@ class Trainer:
                     m_probs_neg = 0.5 * (avg_bio_probs_neg + avg_visual_probs_neg)
                     # Clamp m_probs_neg to avoid log(0) if any probability is exactly 0
                     # m_probs_neg_log = (m_probs_neg.clamp(min=1e-7)).log()
-
+                    m_probs_neg = m_probs_neg.clamp(min=1e-7)
 
                     jsd = 0.5 * (F.kl_div(log_avg_bio_probs_neg, m_probs_neg, reduction='batchmean', log_target=False) + \
                                 F.kl_div(log_avg_visual_probs_neg, m_probs_neg, reduction='batchmean', log_target=False))
@@ -221,9 +223,16 @@ class Trainer:
 
             self.optimizer.zero_grad()
             self.scaler.scale(loss).backward()
+            
+            # Gradient Clipping (before optimizer step, after unscaling)
+            self.scaler.unscale_(self.optimizer) # Unscale gradients before clipping
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+
+            
             self.scaler.step(self.optimizer)
             self.scaler.update()
 
+            self.ema_model.update()
             if scheduler: # + epoch * len(loader)
                 if self.cfg['lr_schedule'] == 'cyclic':
                     scheduler.step()
@@ -246,7 +255,7 @@ class Trainer:
                 # pbar_postfix = {**{'loss': avg_step_loss, 'lr': f"{current_lr:.2e}"}, **accs_computed}
                 # pbar.set_postfix(pbar_postfix)
                 log_message_parts = [
-                    f"Epoch {epoch+1}/{self.cfg['epochs']}",
+                    # f"Epoch {epoch+1}/{self.cfg['epochs']}",
                     f"Step {step+1}/{num_batches}",
                     f"Loss: {avg_step_loss:.4f}",
                     f"LR: {current_lr:.2e}"
@@ -323,7 +332,7 @@ class Evaluator:
                 if (step + 1) % log_freq == 0 or (step + 1) == num_batches:
                     accs_computed = {k: m.compute().item() for k, m in self.metrics_val.items()}
                     log_message_parts = [
-                        f"Val. Epoch {epoch+1}",
+                        # f"Val. Epoch {epoch+1}",
                         f"Step {step+1}/{num_batches}"
                     ]
                     for name, acc_val in accs_computed.items():
