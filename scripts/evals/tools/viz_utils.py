@@ -10,10 +10,10 @@ from matplotlib.ticker import MaxNLocator, FuncFormatter
 mpl.rcParams['figure.dpi'] = 150
 mpl.rcParams['savefig.dpi'] = 600
 
-from tools.eval_utils import (TestTimeEvaluator,
-                              apply_temporal_smoothing_probs,
-                              apply_temporal_smoothing_preds,
-                              hysteresis_thresholding)
+from evals.tools.evaluators import TestTimeEvaluator
+from evals.tools.utils import (apply_temporal_smoothing_probs,
+                                apply_temporal_smoothing_preds,
+                                hysteresis_thresholding)
 from sklearn.metrics import (
     confusion_matrix, classification_report, roc_curve, auc, 
     precision_recall_curve, average_precision_score, f1_score,
@@ -183,7 +183,8 @@ def plot_model_comparison(
     remove_spines=True,
     grid=True,
     time_format="auto",
-    save_dir=None
+    save_dir=None,
+    filename=None
 ):
     """
     Plot ground truth and model probabilities in a clean, scalable layout.
@@ -355,10 +356,14 @@ def plot_model_comparison(
     plt.subplots_adjust(left=0.1, right=0.98, top=0.97, bottom=0.08)
     
     if save_dir:
-        fig.savefig(f"{save_dir}/modality_comparison.png", bbox_inches='tight')
+        if filename is not None:
+            fig.savefig(f"{save_dir}/modality_comparison_{filename}.png", bbox_inches='tight')
+        else:
+            fig.savefig(f"{save_dir}/modality_comparison.png", bbox_inches='tight')
     return fig
 
-def draw_temporal_seizure_plots(all_targets, probs_list, labels_list, eval_config, threshold=0.7):
+def draw_temporal_seizure_plots(all_targets, probs_list, labels_list,
+                                eval_config, threshold=0.7, filename=None):
 
     fig = plot_model_comparison(
         ground_truth=all_targets,
@@ -376,6 +381,7 @@ def draw_temporal_seizure_plots(all_targets, probs_list, labels_list, eval_confi
         time_format="auto",
         remove_spines=True,
         save_dir=eval_config['output_dir'],
+        filename=filename
     )
     return fig
 # r = all_probs['fusion_outputs']

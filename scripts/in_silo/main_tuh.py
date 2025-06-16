@@ -8,7 +8,7 @@ Created on Tue Oct 22 00:08:13 2024
 #%%
 
 import os
-os.chdir('/home/user01/Data/npj/scripts/ts/')
+os.chdir('/home/user01/Data/npj/scripts/')
 import joblib
 import wandb
 from tsai.all import *
@@ -24,9 +24,9 @@ from torch.optim import AdamW
 from fastai.optimizer import OptimWrapper
 from fastai.callback.training import GradientClip
 from tsai.data.mixed_augmentation import MixUp1d, IntraClassCutMix1d
-from augs import ExclusiveMixer
-from dilvit import DILVIT
-from timemil import TimeMIL
+from in_silo.utils.augs import ExclusiveMixer
+from in_silo.models.dilvit import DILVIT
+from in_silo.models.timemil import TimeMIL
 #%%
 exp_name = 'tuh_ecgH_bvg_InceptionTime' 
 # Define your configuration for wandb

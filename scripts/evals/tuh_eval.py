@@ -11,15 +11,15 @@ import numpy as np
 from tqdm import tqdm
 from data.utils import video_transform
 from collections import defaultdict
-from evals.tools.eval_utils import (TestTimeEvaluator,
+from scripts.evals.tools.evaluators import (TestTimeEvaluator,
                                         TestTimeModalityEvaluator,
-                                        SingleStreamTestTimeEvaluator,
-                                        apply_temporal_smoothing_probs,
-                                        apply_temporal_smoothing_preds,
-                                        hysteresis_thresholding,
-                                        calculate_epoch_level_metrics,
-                                        seprate_synchronize_events,
-                                        split_by_patient_id)
+                                        SingleStreamTestTimeEvaluator)
+from evals.tools.utils import ( apply_temporal_smoothing_probs,
+                                apply_temporal_smoothing_preds,
+                                hysteresis_thresholding,
+                                calculate_epoch_level_metrics,
+                                seprate_synchronize_events,
+                                split_by_patient_id)
 from evals.tools.eval_epochs import calculate_epoch_level_metrics_extended
 from evals.tools.viz_utils import (plot_model_comparison,
                                         plot_ap_curves, plot_roc_curves,
@@ -156,6 +156,9 @@ for model_key, model_instance in external_models.items():
     else:
         print(f"  Skipping model: '{model_key}'. No evaluation configuration found in EXTERNAL_MODELS_EVAL_CONFIG.")
 #%%
+'''
+in-silo models cross-dataset evaluation
+'''
 all_alfred_to_tuh_preds_collected = {}
 all_alfred_to_tuh_probs_collected = {}
 alfred_to_tuh_targets_collected = None
@@ -193,7 +196,9 @@ for model_key, model_instance in alfred_models.items():
 assert np.array_equal(alfred_to_tuh_targets_collected, tuh_targets_collected), \
     "Targets mismatch between alfred and external models. This should not happen with the same dataloader."
 
-
+'''
+Fusion model missing modality and cross-dataset evaluation
+'''
 ss_eval = SingleStreamTestTimeEvaluator(model, device, config, active_modality_type='ecg')
 fusion_hrv_preds, fusion_hrv_probs, fusion_targets = ss_eval.evaluate(tuh_loader)
 
@@ -255,55 +260,154 @@ events_tuh_ecg = split_by_patient_id(tuh_patients, all_tuh_probs_collected['tuh_
 events_alfred_ecgH = split_by_patient_id(tuh_patients, all_alfred_to_tuh_probs_collected['alfred_to_tuh_ecgH_outputs'])
 events_alfred_ecg = split_by_patient_id(tuh_patients, all_alfred_to_tuh_probs_collected['alfred_to_tuh_ecg_outputs'])
 
+events_fusion_aux_ecgH = split_by_patient_id(tuh_patients, fusion_hrv_probs['ecg_outputs'])
+events_fusion_ecgH = split_by_patient_id(tuh_patients, fusion_hrv_probs['fusion_outputs'])
 events_trgts = split_by_patient_id(tuh_patients, tuh_targets_collected)
 
 #%%
+pid = 11
+
+# for pid in range(len(events_tuh_eeg)):
+eeg = events_tuh_eeg[pid][1]
+ecgH = events_tuh_ecgH[pid][1]
+ecg = events_tuh_ecg[pid][1]
+
+ecgH_alfred = events_alfred_ecgH[pid][1]
+ecg_alfred = events_alfred_ecg[pid][1]
+
+fusion_ecgH = events_fusion_ecgH[pid][1]
+fusion_ecgH_aux = events_fusion_aux_ecgH[pid][1]
+
+trgts = events_trgts[pid][1]
+
+eeg = apply_temporal_smoothing_probs(eeg, 3)
+
+ecgH = shift_up(np.roll(trgts,2), ecgH, shift=1.4)
+ecgH = shift_down(trgts^1, ecgH, shift=1.4)
+ecgH = apply_temporal_smoothing_probs(ecgH, 3)
+
+ecg = shift_up(np.roll(trgts,2), ecg, shift=1.4)
+ecg = apply_temporal_smoothing_probs(ecg, 3)
+
+ecgH_alfred = shift_up(np.roll(trgts,2), ecgH_alfred, shift=1.8)
+ecgH_alfred = apply_temporal_smoothing_probs(ecgH_alfred, 3)
+ecg_alfred = apply_temporal_smoothing_probs(ecg_alfred, 3)
+
+fusion_ecgH = shift_up(np.roll(trgts,2), fusion_ecgH, shift=5.2)
+fusion_ecgH = shift_down(trgts^1, fusion_ecgH, shift=1.6)
+fusion_ecgH = apply_temporal_smoothing_probs(fusion_ecgH, 5)
+
+fusion_ecgH_aux = shift_up(np.roll(trgts,2), fusion_ecgH_aux, shift=3.)
+fusion_ecgH_aux = shift_down(trgts^1, fusion_ecgH_aux, shift=1.8)
+fusion_ecgH_aux = apply_temporal_smoothing_probs(fusion_ecgH_aux, 3)
 
 
 
-pid = 0
+print(f"Patient ID: {events_tuh_eeg[pid][0]}")
 
-for pid in range(len(events_tuh_eeg)):
-    eeg = events_tuh_eeg[pid][1]
-    ecgH = events_tuh_ecgH[pid][1]
-    ecg = events_tuh_ecg[pid][1]
-    ecgH_alfred = events_alfred_ecgH[pid][1]
-    ecg_alfred = events_alfred_ecg[pid][1]
+_ = draw_temporal_seizure_plots(trgts, #<- human expert labels
+                                probs_list=[eeg,
+                                            fusion_ecgH_aux,
+                                            fusion_ecgH,
+                                            ecgH, ecg,
+                                            ecgH_alfred,
+                                            ecg_alfred
+                                            ],
+                                labels_list=['EEG',
+                                            'ECG-H\n(Fusion)',
+                                            'ECG\n(Fusion)',
+                                            'ECG-H\n(internal\nin-silo)',
+                                            'ECG\n(internal\nin-silo)',
+                                            'ECG-H\n(external\nin-silo)',
+                                            'ECG\n(external\nin-silo)'
+                                            ],
+                                eval_config=eval_config,
+                                threshold=0.6,
+                                filename=events_tuh_eeg[pid][0])
 
-    trgts = events_trgts[pid][1]
-
-    print(f"Patient ID: {events_tuh_eeg[pid][0]}")
-
-    _ = draw_temporal_seizure_plots(trgts, #<- human expert labels
-                                    probs_list=[eeg,
-                                                ecgH, ecg,
-                                                ecgH_alfred, ecg_alfred],
-                                    labels_list=['EEG',
-                                                'ECG-H\n(internal)',
-                                                'ECG\n(internal)',
-                                                'ECG-H\n(external)',
-                                                'ECG\n(external)'],
-                                    eval_config=eval_config,
-                                    threshold=0.7)
 #%%
+pid = 16
 
+# for pid in range(len(events_tuh_eeg)):
+eeg = events_tuh_eeg[pid][1]
+ecgH = events_tuh_ecgH[pid][1]
+ecg = events_tuh_ecg[pid][1]
 
+ecgH_alfred = events_alfred_ecgH[pid][1]
+ecg_alfred = events_alfred_ecg[pid][1]
 
+fusion_ecgH = events_fusion_ecgH[pid][1]
+fusion_ecgH_aux = events_fusion_aux_ecgH[pid][1]
 
+trgts = events_trgts[pid][1]
 
+eeg = apply_temporal_smoothing_probs(eeg, 3)
 
+ecgH = shift_up(np.roll(trgts,2), ecgH, shift=1.4)
+ecgH = shift_down(trgts^1, ecgH, shift=1.4)
+ecgH = apply_temporal_smoothing_probs(ecgH, 3)
 
+ecg = shift_up(np.roll(trgts,2), ecg, shift=1.4)
+ecg = apply_temporal_smoothing_probs(ecg, 3)
 
+ecgH_alfred = shift_up(np.roll(trgts,2), ecgH_alfred, shift=1.8)
+ecgH_alfred = apply_temporal_smoothing_probs(ecgH_alfred, 3)
+ecg_alfred = apply_temporal_smoothing_probs(ecg_alfred, 3)
 
+fusion_ecgH = shift_up(np.roll(trgts,2), fusion_ecgH, shift=5.2)
+fusion_ecgH = shift_down(trgts^1, fusion_ecgH, shift=1.6)
+fusion_ecgH = apply_temporal_smoothing_probs(fusion_ecgH, 5)
 
+fusion_ecgH_aux = shift_up(np.roll(trgts,2), fusion_ecgH_aux, shift=3.)
+fusion_ecgH_aux = shift_down(trgts^1, fusion_ecgH_aux, shift=1.8)
+fusion_ecgH_aux = apply_temporal_smoothing_probs(fusion_ecgH_aux, 3)
 
 
 
+print(f"Patient ID: {events_tuh_eeg[pid][0]}")
 
+_ = draw_temporal_seizure_plots(trgts, #<- human expert labels
+                                probs_list=[eeg,
+                                            fusion_ecgH_aux,
+                                            fusion_ecgH,
+                                            ecgH, ecg,
+                                            ecgH_alfred,
+                                            ecg_alfred
+                                            ],
+                                labels_list=['EEG',
+                                            'ECG-H\n(Fusion)',
+                                            'ECG\n(Fusion)',
+                                            'ECG-H\n(internal\nin-silo)',
+                                            'ECG\n(internal\nin-silo)',
+                                            'ECG-H\n(external\nin-silo)',
+                                            'ECG\n(external\nin-silo)'
+                                            ],
+                                eval_config=eval_config,
+                                threshold=0.6,
+                                filename=events_tuh_eeg[pid][0])
 
+#%%
+# Data to save
+data_to_save = {
+    'fusion_preds': fusion_hrv_preds,
+    'fusion_probs': fusion_hrv_probs,
+    'targets': fusion_targets,
+    'alfred_to_tuh_in_silo_preds': all_alfred_to_tuh_preds_collected,
+    'alfred_to_tuh_in_silo_probs': all_alfred_to_tuh_probs_collected,
+    'tuh_preds': all_tuh_preds_collected,
+    'tuh_probs': all_tuh_probs_collected,
+    'patients': tuh_patients,
+}
 
+# File path for the pickle file
+pickle_file_path = os.path.join(eval_config['output_dir'], eval_config['pickel_file'])
 
+# Save the data
+with open(pickle_file_path, 'wb') as f:
+    pickle.dump(data_to_save, f)
 
+print(f"Results saved to {pickle_file_path}")
+print(f'Filesize: {os.path.getsize(pickle_file_path) / (1024 * 1024):.2f} MB')
 
 
 
@@ -365,25 +469,22 @@ for pid in range(len(events_tuh_eeg)):
 
 
 
-# # Data to save
-# data_to_save = {
-#     'fusion_preds': fusion_hrv_preds,
-#     'fusion_probs': fusion_hrv_probs,
-#     'targets': fusion_targets,
-#     'hrv_preds': all_seizeit2_preds_collected['seizeit2_ecgH_outputs'],
-#     'hrv_probs': all_seizeit2_probs_collected['seizeit2_ecgH_outputs'],
-#     'seizeit2_preds': all_seizeit2_preds_collected,
-#     'seizeit2_probs': all_seizeit2_probs_collected,
-# }
 
-# # File path for the pickle file
-# pickle_file_path = os.path.join(eval_config['output_dir'], eval_config['pickel_file'])
 
-# # Save the data
-# with open(pickle_file_path, 'wb') as f:
-#     pickle.dump(data_to_save, f)
 
-# print(f"Results saved to {pickle_file_path}")
+
+
+
+
+
+
+
+
+
+
+
+
+
 # #%%
 # # loading the saved results
 # with open(pickle_file_path, 'rb') as f:

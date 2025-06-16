@@ -3,7 +3,7 @@
 pretrained_root_dir = '/home/user01/Data/npj/scripts/models/pretrained/'
 
 mme = dict(
-            batch_size= 1,
+            batch_size= 32,
 
             num_sub_classes = 5,
             num_sup_classes = 2, # wiht sigmoid activation output
@@ -28,7 +28,7 @@ mme = dict(
 
             # INceptionTime
             hrv_channels=19,
-            incep_num_features=256,
+            incep_num_features=64,
             
             xcm_num_features=128,
             # GTN dual branch

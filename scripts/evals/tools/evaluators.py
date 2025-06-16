@@ -172,7 +172,202 @@ class TestTimeModalityEvaluator:
         all_targets = torch.cat(all_targets, dim=0).numpy()  # (N,)
 
         return all_preds, all_probs, all_targets
+    
+    
+class PartialStreamTestTimeEvaluator: # Renamed to match your prompt
+    """
+    Evaluator for test-time inference with a multi-modal model (MME_Model)
+    when one or more input modality streams are active (fed with real data)
+    and others are fed with zero tensors.
 
+    Collects 'fusion_outputs', individual outputs for each active modality
+    (e.g., 'flow_outputs', 'body_outputs'), and 'joint_pose_outputs' if any
+    pose-related modality is active.
+    """
+    def __init__(self, model, device, config, active_modality_types: list):
+        """
+        Args:
+            model: The MME_Model instance.
+            device: torch.device for computation.
+            config: Global configuration dictionary, used for tensor shapes.
+            active_modality_types (list[str]): Specifies the active input modalities.
+        """
+        active_modalities_str = ", ".join(active_modality_types) if active_modality_types else "None"
+        print(40*"-")
+        print(f"Initializing PartialStreamTestTimeEvaluator for active modalities: [{active_modalities_str}]")
+        print(40*"=")
+        self.model = model.to(device)
+        self.device = device
+        self.config = config
+
+        self.model_input_specs = {
+            "frames": {
+                "batch_data_key": "frames",
+                "processor": lambda data: video_transform(data).to(self.device, non_blocking=True),
+                "zero_shape_fn": lambda b_size: (b_size, 3, self.config['flow_frames'], self.config['video_height'], self.config['video_width']),
+                "dtype": torch.float
+            },
+            "body": {
+                "batch_data_key": "body",
+                "processor": lambda data: data.permute(0,4,2,3,1).float().to(self.device, non_blocking=True),
+                "zero_shape_fn": lambda b_size: (b_size, 1, self.config['pose_frames'], 17, 3),
+                "dtype": torch.float
+            },
+            "face": {
+                "batch_data_key": "face",
+                "processor": lambda data: data.permute(0,4,2,3,1).float().to(self.device, non_blocking=True),
+                "zero_shape_fn": lambda b_size: (b_size, 1, self.config['pose_frames'], 70, 3),
+                "dtype": torch.float
+            },
+            "rhand": {
+                "batch_data_key": "rhand",
+                "processor": lambda data: data.permute(0,4,2,3,1).float().to(self.device, non_blocking=True),
+                "zero_shape_fn": lambda b_size: (b_size, 1, self.config['pose_frames'], 21, 3),
+                "dtype": torch.float
+            },
+            "lhand": {
+                "batch_data_key": "lhand",
+                "processor": lambda data: data.permute(0,4,2,3,1).float().to(self.device, non_blocking=True),
+                "zero_shape_fn": lambda b_size: (b_size, 1, self.config['pose_frames'], 21, 3),
+                "dtype": torch.float
+            },
+            "hrv": {
+                "batch_data_key": "hrv",
+                "processor": lambda data: data.to(torch.float).to(self.device, non_blocking=True),
+                "zero_shape_fn": lambda b_size: (b_size, 19, int(self.config['ecg_freq'] * self.config['sample_duration'])),
+                "dtype": torch.float
+            }
+        }
+        
+        # Maps user-facing modality type strings to their model input argument name,
+        # a user-facing name for descriptions, and the key for their individual output branch.
+        type_to_details_map = {
+            "flow":  {"model_arg_name": "frames", "user_facing_name": "flow",  "individual_output_key": "flow_outputs"},
+            "ecg":   {"model_arg_name": "hrv",    "user_facing_name": "ecg",   "individual_output_key": "ecg_outputs"},
+            "body":  {"model_arg_name": "body",   "user_facing_name": "body",  "individual_output_key": "body_outputs"},
+            "face":  {"model_arg_name": "face",   "user_facing_name": "face",  "individual_output_key": "face_outputs"},
+            "rhand": {"model_arg_name": "rhand",  "user_facing_name": "rhand", "individual_output_key": "rhand_outputs"},
+            "lhand": {"model_arg_name": "lhand",  "user_facing_name": "lhand", "individual_output_key": "lhand_outputs"},
+        }
+        
+        self.pose_input_types = ["body", "face", "rhand", "lhand"] # User-facing types that are considered pose-related
+
+        if not isinstance(active_modality_types, list):
+            raise TypeError(f"active_modality_types must be a list, got {type(active_modality_types)}")
+
+        self.active_model_input_args = [] 
+        self.output_keys_to_collect = ["fusion_outputs"] # Always collect fusion
+        active_user_facing_names_for_desc = []
+        is_any_pose_modality_active = False
+
+        for active_type in active_modality_types:
+            if active_type not in type_to_details_map:
+                raise ValueError(f"Unsupported active_modality_type: '{active_type}'. Supported types are: {list(type_to_details_map.keys())}")
+            
+            details = type_to_details_map[active_type]
+            self.active_model_input_args.append(details["model_arg_name"])
+            active_user_facing_names_for_desc.append(details["user_facing_name"])
+
+            # Add the individual output key for this active modality if defined
+            if "individual_output_key" in details:
+                self.output_keys_to_collect.append(details["individual_output_key"])
+
+            if active_type in self.pose_input_types:
+                is_any_pose_modality_active = True
+
+        if is_any_pose_modality_active:
+            self.output_keys_to_collect.append("joint_pose_outputs") # Add combined pose output if any pose input is active
+        
+        self.active_model_input_args = sorted(list(set(self.active_model_input_args))) 
+        self.output_keys_to_collect = sorted(list(set(self.output_keys_to_collect))) # Make unique and sort
+        
+        print(f"Output keys to collect: {self.output_keys_to_collect}") # For debugging
+        self.tqdm_desc_active_modalities_str = ", ".join(sorted(list(set(active_user_facing_names_for_desc))))
+
+
+    def _get_input_tensor(self, model_arg_name, batch, batch_size):
+        spec = self.model_input_specs[model_arg_name]
+        if model_arg_name in self.active_model_input_args:
+            batch_data = batch[spec["batch_data_key"]]
+            return spec["processor"](batch_data)
+        else:
+            return torch.zeros(spec["zero_shape_fn"](batch_size), dtype=spec["dtype"], device=self.device)
+
+    def evaluate(self, loader):
+        self.model.eval()
+        filenames = []
+        all_preds = {key: [] for key in self.output_keys_to_collect}
+        all_probs = {key: [] for key in self.output_keys_to_collect}
+        all_targets = []
+
+        desc = f"Partial-stream eval (active: {self.tqdm_desc_active_modalities_str if self.tqdm_desc_active_modalities_str else 'None'})"
+        with torch.no_grad():
+            pbar = tqdm(loader, desc=desc, unit="batch", ascii='🔵⚪')
+            for batch_idx, batch in enumerate(pbar): # Added batch_idx for more specific warnings
+                batch_size = len(batch["super_lbls"]) # Assuming 'super_lbls' determines batch size
+                
+                filenames.append(batch['filename'][0])
+                
+                frames_input = self._get_input_tensor("frames", batch, batch_size)
+                body_input   = self._get_input_tensor("body",   batch, batch_size)
+                face_input   = self._get_input_tensor("face",   batch, batch_size)
+                rhand_input  = self._get_input_tensor("rhand",  batch, batch_size)
+                lhand_input  = self._get_input_tensor("lhand",  batch, batch_size)
+                hrv_input    = self._get_input_tensor("hrv",    batch, batch_size)
+                
+                if batch["super_lbls"].ndim == 1:
+                    targets = batch["super_lbls"].long().to(self.device, non_blocking=True)
+                else:
+                    targets = torch.argmax(batch["super_lbls"], dim=1)\
+                                    .long().to(self.device, non_blocking=True)
+                
+                # Ensure all model inputs are provided, even if they are zero tensors
+                outputs = self.model(
+                    frames=frames_input, 
+                    body=body_input, 
+                    face=face_input, 
+                    rh=rhand_input,  # Assuming 'rh' is the model argument name for rhand
+                    lh=lhand_input,  # Assuming 'lh' is the model argument name for lhand
+                    ecg=hrv_input    # Assuming 'ecg' is the model argument name for hrv
+                )
+
+
+                for key in self.output_keys_to_collect:
+                    if key in outputs:
+                        logits = outputs[key]
+                        prob   = F.softmax(logits, dim=1)
+                        pred   = torch.argmax(prob, dim=1)
+                        all_preds[key].append(pred.cpu())
+                        all_probs[key].append(prob.cpu()) # Store full probabilities for now
+                    else:
+                        print(f"Warning (Batch {batch_idx}): Expected output key '{key}' not found in model outputs. This key will have empty results.")
+                        # all_preds[key] and all_probs[key] will remain empty lists for this key if never found
+                        pass 
+
+                all_targets.append(targets.cpu())
+
+        for key in self.output_keys_to_collect:
+            if all_preds[key]: # Check if list is not empty (i.e., key was found in model outputs at least once)
+                 all_preds[key] = torch.cat(all_preds[key], dim=0).numpy()
+                 # For probabilities, decide how to handle multi-class.
+                 # If you want prob of predicted class:
+                 # probs_for_key = torch.cat(all_probs[key], dim=0)
+                 # all_probs[key] = probs_for_key.gather(1, all_preds[key].reshape(-1,1)).squeeze().numpy()
+                 # If you want prob of class 1 (for binary or specific interest):
+                 probs_for_key = torch.cat(all_probs[key], dim=0)
+                 if probs_for_key.shape[1] > 1: # Check if multi-class
+                    all_probs[key] = probs_for_key[:, 1].numpy() # Prob of class 1
+                 else: # Single class output (e.g. regression, or already a probability)
+                    all_probs[key] = probs_for_key.squeeze().numpy()
+
+            else: 
+                 all_preds[key] = np.array([]) 
+                 all_probs[key] = np.array([])
+
+
+        all_targets = torch.cat(all_targets, dim=0).numpy()
+
+        return all_preds, all_probs, all_targets, filenames
 
 class SingleStreamTestTimeEvaluator:
     """
@@ -343,233 +538,3 @@ class SingleStreamTestTimeEvaluator:
         all_targets = torch.cat(all_targets, dim=0).numpy()
 
         return all_preds, all_probs, all_targets
-
-def apply_temporal_smoothing_probs(probabilities, smoothing_window=3):
-    """Apply temporal smoothing to 1D probability array"""
-    if len(probabilities) < smoothing_window:
-        return probabilities
-    
-    # Use valid mode to avoid edge effects
-    smoothed = np.convolve(probabilities, 
-                            np.ones(smoothing_window) / smoothing_window, 
-                            mode='same')
-    return smoothed
-
-def apply_temporal_smoothing_preds(preds, window_size=3):
-    """
-    Applies temporal smoothing to the predictions using a moving mode filter.
-    
-    Args:
-        preds (np.ndarray): Predictions of shape (N,).
-        window_size (int): Size of the smoothing window.
-        
-    Returns:
-        np.ndarray: Smoothed predictions.
-    """
-    if window_size < 1:
-        return preds
-
-    smoothed_preds = np.copy(preds)
-    half_window = window_size // 2
-
-    for i in range(len(preds)):
-        start = max(0, i - half_window)
-        end = min(len(preds), i + half_window + 1)
-        smoothed_preds[i] = mode(preds[start:end], keepdims=False).mode
-
-    return smoothed_preds
-
-def hysteresis_thresholding(probs, high_thresh=0.7, low_thresh=0.3,
-                            initial_state=0, only_pos_probs=False):
-    
-    """
-    Apply hysteresis thresholding to a sequence of binary classification probabilities.
-
-    Args:
-        probs (np.ndarray): Array of shape (T, 2), where each row is [p_neg, p_pos] from softmax,
-                            or shape (T,) if only positive probabilities are provided.
-        high_thresh (float): Threshold to switch from negative to positive.
-        low_thresh (float): Threshold to switch from positive to negative.
-        initial_state (int): Starting state (0=negative, 1=positive).
-        only_pos_probs (bool): If True, `probs` is expected to be a 1D array of positive class probabilities.
-
-    Returns:
-        np.ndarray: Array of shape (T,), with values 0 or 1 representing the predicted class at each time step.
-    """
-    # probs = np.asarray(probs)  # Ensure input is a NumPy array
-
-    if only_pos_probs:
-        if probs.ndim != 1:
-            raise ValueError("Expected 1D array for positive probabilities when only_pos_probs=True.")
-        pos_probs = probs
-    else:
-        if probs.ndim != 2 or probs.shape[1] != 2:
-            raise ValueError("Expected 2D array of shape (T, 2) when only_pos_probs=False.")
-        pos_probs = probs[:, 1]
-        
-    n = len(pos_probs)
-
-    # Initialize predictions array
-    preds = np.zeros(n, dtype=int)
-    current_state = initial_state
-
-    for i, p in enumerate(pos_probs):
-        if current_state == 0:
-            # Only switch to positive if we exceed the high threshold
-            if p >= high_thresh:
-                current_state = 1
-        else:
-            # Only switch to negative if we fall below the low threshold
-            if p < low_thresh:
-                current_state = 0
-        preds[i] = current_state
-
-    return preds
-
-
-def calculate_epoch_level_metrics(all_preds, all_probs, all_targets, eval_config):
-
-    modalities = all_preds.keys()
-
-    recall_dict, prec_dict, auroc_dict, ap_dict, cm = {}, {}, {}, {}, {}
-
-    for modality in modalities:
-        # Calculate Precision and Recall First
-        probs_pr = all_probs[modality] # shape: (N,) we only get pos_probs from evaluator
-        
-        prebs_pr = hysteresis_thresholding(probs_pr, 0.8, 0.2, only_pos_probs=True)
-        prebs_pr = apply_temporal_smoothing_preds(prebs_pr, 5)
-        
-        recall_dict[modality] = recall_score(all_targets, prebs_pr, pos_label=1,
-                                                average='weighted', zero_division='warn')
-        prec_dict[modality] = precision_score(all_targets, prebs_pr,  pos_label=1,
-                                                average='weighted', zero_division='warn')
-        
-        # Calculate AUROC and Average Precision   
-        probs_ap = all_probs[modality] 
-        probs_ap = apply_temporal_smoothing_probs(probs_ap, 5) # pass this one for plotting AP and AUROC
-        fpr, tpr, _ = roc_curve(all_targets, probs_ap, pos_label=1)
-        
-        auroc_dict[modality] = auc(fpr, tpr)
-        ap_dict[modality] = average_precision_score(all_targets, probs_ap)
-        
-        # get tp, fp, fn, tn
-        probs_conf = all_probs[modality]
-        probs_conf = apply_temporal_smoothing_probs(probs_conf, 3)
-        # makeing high and low thresholds up and tighter gives lower false alarms
-        prebs_conf = hysteresis_thresholding(probs_conf, 0.6, 0.4, only_pos_probs=True)
-        tn, fp, fn, tp = confusion_matrix(all_targets, prebs_conf).ravel()
-        cm[modality] = {
-            'tn': tn,
-            'fp': fp,
-            'fn': fn,
-            'tp': tp
-        }
-    print(60*"=")
-    # Print results in formatted way
-    print(f"{'Modality':<20} {'Recall':<10} {'Precision':<10} {'AUROC':<10} {'AP':<10}")
-    for modality in modalities:
-        print(f"{modality:<20} {recall_dict[modality]:<10.4f} "
-            f"{prec_dict[modality]:<10.4f} {auroc_dict[modality]:<10.4f} "
-            f"{ap_dict[modality]:<10.4f}")
-    print(60*"=")
-    # Print confusion matrix in formatted way
-    print(f"{'Modality':<20} {'TN':<10} {'FP':<10} {'FN':<10} {'TP':<10}")
-    for modality in modalities:
-        print(f"{modality:<20} {cm[modality]['tn']:<10} "
-            f"{cm[modality]['fp']:<10} {cm[modality]['fn']:<10} "
-            f"{cm[modality]['tp']:<10}")
-    
-    # get total duration of all targets
-    total_duration = len(all_targets) * eval_config['window_duration']
-    # get duration in hours
-    total_duration_hours = total_duration / 3600.0
-    # get FALSE POSITIVE RATE/h
-    false_alrams = {}
-    for modality in all_preds.keys():
-        false_alarms = cm[modality]['fp'] / total_duration_hours
-        false_alarms = np.round(false_alarms, 2)
-        false_alrams[modality] = false_alarms
-    print(60*"=")
-    print(f"\nTotal Duration: {total_duration_hours:.2f} hours")
-    print(f"{'Modality':<20} {'False Alarms/h':<10}")
-    for modality, fpr in false_alrams.items():
-        print(f"{modality:<20} {fpr:.2f} FPR/h")
-    print(60*"=")
-    return recall_dict, prec_dict, auroc_dict, ap_dict, cm
-
-    
-def seprate_synchronize_events(x, y):
-    """
-    Extracts non-seizure → seizure events from ground truth (x) and aligns them with model outputs (y).
-    
-    Args:
-        x (list or np.ndarray): Ground truth labels (0 = non-seizure, 1 = seizure).
-        y (list or np.ndarray): Model outputs (same length as x).
-
-    Returns:
-        List of dicts, each containing:
-            - 'start': start index of the event
-            - 'end': end index of the event
-            - 'ground_truth': list of ground truth labels for the event
-            - 'model_output': list of model outputs for the event
-    """
-
-    x = np.array(x)
-    y = np.array(y)
-
-    events = []
-    i = 0
-    n = len(x)
-
-    while i < n:
-        # Find start of a non-seizure segment
-        if x[i] == 0:
-            start = i
-            while i < n and x[i] == 0:
-                i += 1
-            # Now i is at the start of a seizure segment (1s)
-            if i < n and x[i] == 1:
-                while i < n and x[i] == 1:
-                    i += 1
-                end = i  # i now points to the end of seizure segment
-                event = {
-                    'start': start,
-                    'end': end,
-                    'ground_truth': x[start:end],#.tolist(),
-                    'model_output': y[start:end]#.tolist()
-                }
-                events.append(event)
-        else:
-            i += 1  # Skip any 1s not preceded by a 0
-
-    return events
-
-def split_by_patient_id(patient_ids, pred_array):
-    """
-    Splits the predictions into a list of tuples (patient_id, array) for each unique patient_id.
-    
-    Args:
-        patient_ids (np.ndarray): Array of patient IDs.
-        pred_array (np.ndarray): Array of predictions corresponding to patient IDs.
-        
-    Returns:
-        List of tuples (patient_id, array).
-    """
-    # check if patient_ids is a numpy array else convert it
-    if not isinstance(patient_ids, np.ndarray):
-        patient_ids = np.array(patient_ids)
-    seen = set()
-    unique_ids = []
-    for pid in patient_ids:
-        if pid not in seen:
-            unique_ids.append(pid)
-            seen.add(pid)
-
-    # Build two lists of (patient_id, array) tuples
-    patient_pred_events = [
-        (pid, pred_array[patient_ids == pid])
-        for pid in unique_ids
-    ]
-    
-    return patient_pred_events

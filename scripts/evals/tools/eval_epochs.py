@@ -8,9 +8,9 @@ from sklearn.metrics import (
     average_precision_score,
     cohen_kappa_score
 )
-from evals.tools.eval_utils import (apply_temporal_smoothing_probs,
-                                            apply_temporal_smoothing_preds,
-                                            hysteresis_thresholding,)
+from evals.tools.utils import (apply_temporal_smoothing_probs,
+                                apply_temporal_smoothing_preds,
+                                hysteresis_thresholding,)
 from MLstatkit.stats import Bootstrapping, Delong_test
 
 def compute_kappas_and_delta(rater1, rater2, rater3):

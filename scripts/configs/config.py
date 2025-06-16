@@ -9,10 +9,12 @@ config = dict(
                 BENCHMARK= False,
                 DEBUG = False,
                 USE_EMA_UPDATES = False,
-                ema_momentum = 0.999,
+                ema_momentum = 0.99,
+                GRADIENT_CLIPPING = True, # 0.0 for no gradient clipping
+                grad_max_norm = 5.0, # 5.0 for no gradient clipping
                 sanity_check = False,
-                project_name= 'NPJ',
-                experiment_name= 'alfred_cv_full_fusion_ce_margin_jsd_lossv18ema',
+                project_name= 'NPJ2',
+                experiment_name= 'alfred_full_v6_IT64',
 
                 log_directory= "/home/user01/Data/npj/logs/",
                 checkpoint_path= "/home/user01/Data/npj/chkpts/",
@@ -24,6 +26,7 @@ config = dict(
                 flow_dir = '/home/user01/Data/npj/datasets/alfred/cv/flow/',
                 pose_dir = '/home/user01/Data/npj/datasets/alfred/cv/pose/',
                 lbl_dir = '/home/user01/Data/npj/datasets/alfred/cv/labels/',
+                eeg_dir = '/home/user01/Data/npj/datasets/alfred/cv/eeg/',
                 
                 # create external data dirs in external_data_dict
                 external_data_dict = {
@@ -31,12 +34,15 @@ config = dict(
                     'flow_dir': '/home/user01/Data/npj/datasets/alfred/external/flow/',
                     'pose_dir': '/home/user01/Data/npj/datasets/alfred/external/pose/',
                     'lbl_dir': '/home/user01/Data/npj/datasets/alfred/external/labels/',
+                    'eeg_dir': '/home/user01/Data/npj/datasets/alfred/external/eeg/',
                 },
 
                 # TUH DATASET
                 tuh_data_dir = '/home/user01/Data/npj/datasets/tuh/',
                 # SeizeIT2 DATASET
                 seizeit2_data_dir = '/home/user01/Data/npj/datasets/seizeit2/',
+                # SAHZU DATASET
+                sahzu_data_dir = '/home/user01/Data/npj/datasets/sahzu/',
                 # BioSignal Chkpts base directory
                 bio_signal_chkpts_dir = '/home/user01/Data/npj/scripts/ts/chkpt/',
                 pin_memory=  True,
@@ -45,11 +51,13 @@ config = dict(
                 num_fold = -1, # -1 for all folds, 0 for fold 0, 1 for fold 1, etc.
 
                 # training settings
-                batch_size= 1,
+                batch_size= 32,
 
                 # learning rate
-                learning_rate= 0.000001, # 0.001
+                learning_rate= 0.0001, # 0.001
                 pose_lr_multiplier= 0.5,#0.1,
+                fusion_lr_multiplier= 1.5, 
+                ecg_lr_multiplier= 2.0, # 0.1,
                 lr_schedule= 'cos', # cos cyclic
                 max_lr = 0.0001, # e.g., max_lr will be 6x base_lr for each group
                 base_lr = 0.000001, # e.g., base_lr will be 1x base_lr for each group
@@ -98,6 +106,7 @@ config = dict(
                 wavelet = "mexh",
                 
                 # -LOSSES
+                use_class_weights = False,
                 auxiliary_loss_weight = 0.2, # for ecg and flow
                 main_loss_weight = 1.0,
                 # due to worse perfromance and NOISy pose mdoalitye reduce the weight

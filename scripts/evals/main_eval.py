@@ -11,14 +11,14 @@ import numpy as np
 from tqdm import tqdm
 from data.utils import video_transform
 from collections import defaultdict
-from evals.tools.eval_utils import (TestTimeEvaluator,
-                                        TestTimeModalityEvaluator,
-                                        SingleStreamTestTimeEvaluator,
-                                        apply_temporal_smoothing_probs,
-                                        apply_temporal_smoothing_preds,
-                                        hysteresis_thresholding,
-                                        calculate_epoch_level_metrics,
-                                        seprate_synchronize_events)
+from evals.tools.evaluators import (TestTimeEvaluator,
+                                    TestTimeModalityEvaluator,
+                                    SingleStreamTestTimeEvaluator)
+from evals.tools.utils import (apply_temporal_smoothing_probs,
+                                apply_temporal_smoothing_preds,
+                                hysteresis_thresholding,
+                                calculate_epoch_level_metrics,
+                                seprate_synchronize_events)
 from evals.tools.eval_epochs import calculate_epoch_level_metrics_extended
 from evals.tools.viz_utils import (plot_model_comparison,
                                         plot_ap_curves, plot_roc_curves,
@@ -158,11 +158,11 @@ _ = draw_temporal_seizure_plots(all_targets,
 
 #%%
 from tsaug.visualization import plot
-import tools.eval_utils as tev
+import scripts.evals.tools.evaluators as tev
 # reloading
 from importlib import reload
 reload(tev)
-from tools.eval_utils import seprate_synchronize_events
+from scripts.evals.tools.evaluators import seprate_synchronize_events
 # from tools.eval_utils import seprate_synchronize_events
 #%%
 events = seprate_synchronize_events(all_targets, all_probs['fusion_outputs'])

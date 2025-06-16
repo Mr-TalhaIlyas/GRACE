@@ -25,7 +25,9 @@ class Trainer:
         self.cfg = cfg
         self.class_weights = class_weights.to(DEVICE) if class_weights is not None else None
 
-        self.ema_model = ExponentialMovingAverage(self.model.parameters(), decay=0.999)
+        if self.config['USE_EMA_UPDATES']:
+            print("Using EMA updates with momentum:", self.config['ema_momentum'])
+            self.ema_model = ExponentialMovingAverage(self.model.parameters(), decay=config['ema_momentum'])
         # Loss function
         self.loss_fn = nn.CrossEntropyLoss(weight=self.class_weights) # Or your custom get_loss
         self.fusion_loss_fn_smooth = nn.CrossEntropyLoss(weight=self.class_weights, label_smoothing=0.1)
@@ -224,15 +226,18 @@ class Trainer:
             self.optimizer.zero_grad()
             self.scaler.scale(loss).backward()
             
-            # Gradient Clipping (before optimizer step, after unscaling)
-            self.scaler.unscale_(self.optimizer) # Unscale gradients before clipping
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            if self.config['GRADIENT_CLIPPING']:
+                # Gradient Clipping (before optimizer step, after unscaling)
+                self.scaler.unscale_(self.optimizer) # Unscale gradients before clipping
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.config['grad_max_norm'])
 
             
             self.scaler.step(self.optimizer)
             self.scaler.update()
-
-            self.ema_model.update()
+            
+            if self.cfg['USE_EMA_UPDATES']:
+                self.ema_model.update()
+            
             if scheduler: # + epoch * len(loader)
                 if self.cfg['lr_schedule'] == 'cyclic':
                     scheduler.step()

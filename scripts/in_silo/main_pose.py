@@ -1,12 +1,4 @@
 #%%
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Created on Wed May 14 09:43:52 2025
-
-@author: user01
-"""
-
 import os, psutil
 # os.chdir(os.path.dirname(__file__))
 os.chdir('/home/user01/Data/npj/scripts/')
@@ -64,6 +56,7 @@ hardware_table.add_row("Total Memory", f"{memory.total / (1024**3):.2f} GB")
 
 console.print(hardware_table)
 
+config['LOG_WANDB'] = False
 if config['LOG_WANDB']:
     import wandb
     # from datetime import datetime
@@ -113,14 +106,14 @@ mpl.rcParams['figure.dpi'] = 150
 from termcolor import cprint
 from tqdm import tqdm
 
-from data.dataloader import GEN_DATA_LISTS, SlidingWindowMMELoader
+from data.sahzu_loader import GEN_DATA_LISTS, SlidingWindowVisualLoader
 from data.utils import collate, values_fromreport, print_formatted_table
 
-from models.model import MME_Model
+from in_silo.models.pose_model import POSE_Model
 from torch.optim.lr_scheduler import CyclicLR
 from models.utils.lr_scheduler import LR_Scheduler
 from models.utils.tools import save_chkpt, load_chkpt, save_ema_chkpts
-from tools.training_v7 import Trainer, Evaluator
+from in_silo.utils.pose_trainer import Trainer, Evaluator
 
 from sklearn.metrics import confusion_matrix, classification_report
 
@@ -133,32 +126,15 @@ from IPython.display import HTML
 num_super_classes = len(config['super_classes'])
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-if config['num_fold'] < 0: # -1 means all folds
-    data_gen = GEN_DATA_LISTS(config)
-    train_data = data_gen.get_folds(-1)
-    
-    if config['use_class_weights']:
-        class_weights = data_gen.calculate_class_weights(train_data, num_super_classes)
-        rprint(f"[bold cyan]Calculated class weights:[/] {class_weights}")
-    else:
-        class_weights = None
-        rprint("[bold cyan]Using no class weights[/]")
+CHKPT_PATH = '/home/user01/Data/npj/scripts/in_silo/chkpt'
+EXP_NAME = 'sahzu_pose_in_silo_exp'  # config['experiment_name'] or 'Pose_Exp
 
-    data_gen = GEN_DATA_LISTS(config['external_data_dict'])
-    test_data = data_gen.get_folds(-1)
-
-else:
-    data_gen = GEN_DATA_LISTS(config)
-    train_data, test_data = data_gen.get_folds(config['num_fold'])
-
-if config['sanity_check']:
-    data_gen.chk_paths(train_data)
-    data_gen.chk_paths(test_data)
+data_gen = GEN_DATA_LISTS(config)
+sahzu_data = data_gen.get_splits()
 
 
 
-train_dataset = SlidingWindowMMELoader(train_data, config, augment=True)
-
+train_dataset = SlidingWindowVisualLoader(sahzu_data, config, augment=True, split='train')
 train_loader = DataLoader(train_dataset,
                         batch_size=config['batch_size'], shuffle=True,
                         num_workers=config['num_workers'], drop_last=True,
@@ -166,8 +142,7 @@ train_loader = DataLoader(train_dataset,
                         prefetch_factor=2, persistent_workers=True,
                         )
 
-
-val_dataset = SlidingWindowMMELoader(test_data, config, augment=False)
+val_dataset = SlidingWindowVisualLoader(sahzu_data, config, augment=False, split='val')
 val_loader = DataLoader(val_dataset,
                         batch_size=config['batch_size'], shuffle=True,
                         num_workers=config['num_workers'], drop_last=True,
@@ -182,9 +157,7 @@ print(f"│ {'• Overlap:':<20} {config['window_overlap']:<10} seconds │")
 print(f"│ {'• Train Windows:':<20} {len(train_dataset.mapping):<10} │")
 print(f"│ {'• Test Windows:':<20} {len(val_dataset.mapping):<10} │")
 print(f"{'':-^60}")
-
 #%%
-
 if config['sanity_check']:
     batch = next(iter(train_loader))
     print('Visualizing a optical flow...')
@@ -200,84 +173,31 @@ if config['sanity_check']:
     y = batch['super_lbls'][0]
     print(x)
     print(y)
-    # plt.imshow(batch['ecg'][0][:,0:750], 'jet') # first 750 samples.
-    plot(batch['ecg_seg'][0].numpy())
-    plot(batch['hrv'][0].numpy())
-
 #%%
 
-model = MME_Model(config['model'])
+model = POSE_Model(config['model'])
 model.to(DEVICE)
 
-# optimizer = torch.optim.AdamW([{'params': model.parameters(),
-#                             'lr':config['learning_rate']}],
-#                             weight_decay=config['WEIGHT_DECAY'])
-
-pose_params = []
-fusion_params = []
-ecg_params = []
-other_params = []
-
-for name, param in model.named_parameters():
-    if not param.requires_grad:
-        continue
-    if 'bodygcn' in name or 'facegcn' in name or 'rhgcn' in name or 'lhgcn' in name:
-        pose_params.append(param)
-    elif 'fusion' in name:
-        fusion_params.append(param)
-    elif 'ewt' in name or 'ecg' in name or 'hrv' in name:
-        ecg_params.append(param)
-    else:
-        other_params.append(param)
-
-base_lr_main = config['learning_rate']
-base_lr_pose = config['learning_rate'] * config['pose_lr_multiplier']
-base_lr_fusion = config['learning_rate'] * config['fusion_lr_multiplier']
-base_lr_ecg = config['learning_rate'] * config['ecg_lr_multiplier']
-
-optimizer_params = [
-    {'params': other_params, 'lr': base_lr_main}, # Set initial LR for this group
-    {'params': pose_params, 'lr': base_lr_pose},    # Set initial LR for pose group
-    {'params': fusion_params, 'lr': base_lr_fusion}, # Set initial LR for fusion group
-    {'params': ecg_params, 'lr': base_lr_ecg},       # Set initial LR for ECG group
-]
-
-optimizer = torch.optim.AdamW(optimizer_params,
+optimizer = torch.optim.AdamW(model.parameters(),
+                              lr=config['learning_rate'],
                               weight_decay=config['WEIGHT_DECAY'])
 
-if config['lr_schedule'] == 'cyclic':
-    base_lr_main = config['base_lr']
-    base_lr_pose = config['base_lr'] * config['pose_lr_multiplier']
-    max_lr_main = config['max_lr']
-    max_lr_pose = config['max_lr'] * config['pose_lr_multiplier']
-    step_size_up_iters = config['clr_step_epochs'] * len(train_loader)
-
-    scheduler = CyclicLR(optimizer,
-                         base_lr=[base_lr_main, base_lr_pose], # List of base LRs for each group
-                         max_lr=[max_lr_main, max_lr_pose],    # List of max LRs for each group
-                         step_size_up=step_size_up_iters,
-                         mode=config['clr_mode'],
-                         cycle_momentum=False) 
-    print(f"Using PyTorch CyclicLR: base_lrs=[{base_lr_main:.1e}, {base_lr_pose:.1e}],\
-          max_lrs=[{max_lr_main:.1e}, {max_lr_pose:.1e}], step_up_iters={step_size_up_iters}")
-else:
-    # Fallback to your custom scheduler for 'cos', 'poly', 'step'
-    scheduler = LR_Scheduler(config['lr_schedule'],
-                             config['learning_rate'], # Main base LR for your custom scheduler
-                             config['epochs'],
-                             iters_per_epoch=len(train_loader),
-                             warmup_epochs=config['warmup_epochs'])
+scheduler = LR_Scheduler(config['lr_schedule'],
+                        config['learning_rate'], # Main base LR for your custom scheduler
+                        config['epochs'],
+                        iters_per_epoch=len(train_loader),
+                        warmup_epochs=config['warmup_epochs'])
 
 scaler    = GradScaler()
 
-trainer   = Trainer(model, optimizer, scaler, cfg=config, class_weights=class_weights)
+trainer   = Trainer(model, optimizer, scaler, cfg=config)
 evaluator = Evaluator(model)
 #%%
 best_val_fusion = 0.0
 
 for epoch in range(config['epochs']):
     # ——————TRAIN——————
-    train_loss, train_accs, loss_breakdown = trainer.train_epoch(
+    train_loss, train_accs = trainer.train_epoch(
         train_loader, epoch, scheduler
     )
 
@@ -290,16 +210,17 @@ for epoch in range(config['epochs']):
         else:
             val_f1 = evaluator.validate(val_loader, epoch)
         
-        fusion_f1 = val_f1['fusion']
+        fusion_f1 = val_f1['joint_pose_outputs']
         if fusion_f1 > best_val_fusion:
             best_val_fusion = fusion_f1
-            if config['USE_EMA_UPDATES']:
-                chkpt = save_ema_chkpts(model, trainer, epoch, loss=np.nanmean(train_loss),
-                                        acc=fusion_f1, return_chkpt=True)
-            else:
-                chkpt = save_chkpt(model, optimizer, epoch, loss=np.nanmean(train_loss),
-                                   acc=fusion_f1, return_chkpt=True)
-            
+            torch.save({
+                'epoch': epoch,
+                'loss': np.nanmean(train_loss),
+                'acc': fusion_f1,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict()
+                }, os.path.join(CHKPT_PATH, f'{EXP_NAME}.pth'))
+            print(f"-> Saving best checkpoint at epoch {epoch+1} with F1-score {fusion_f1:.4f}")
     # —————— LOG METRICS ——————
     if config['LOG_WANDB']:
         log_dict = {
@@ -307,15 +228,12 @@ for epoch in range(config['epochs']):
             'train/loss': train_loss,
             **{f"train/{k}": v for k, v in train_accs.items()},
         }
-        if loss_breakdown:
-            for loss_name, loss_value in loss_breakdown.items():
-                log_dict[f'train/loss_{loss_name}'] = loss_value
+
         if val_f1:
             log_dict.update({
-                'val/fusion':    val_f1['fusion'],
-                'val/flow':      val_f1['flow'],
-                'val/ecg':       val_f1['ecg'],
-                'val/pose':      val_f1['pose'],
+                'val/fusion':    val_f1['joint_pose_outputs'],
+                'val/face_outputs':  val_f1['face_outputs'],
+                'val/body_outputs':  val_f1['body_outputs'],
                 'best/fusion':   best_val_fusion,
             })
         wandb.log(log_dict, step=epoch+1)
@@ -323,10 +241,10 @@ for epoch in range(config['epochs']):
     # —————— PRINT SUMMARY ——————
     cprint(f"\nEpoch {epoch+1:02d}/{config['epochs']} — "
             # f"Train Loss: {train_loss:.4f} | "
-            f"Train Fusion F1-score: {train_accs['fusion']:.4f} | "
-            f"Val Fusion F1-score: {val_f1.get('fusion', -1):.4f} | "
+            f"Train Fusion F1-score: {train_accs['joint_pose_outputs']:.4f} | "
+            f"Val Fusion F1-score: {val_f1.get('joint_pose_outputs', -1):.4f} | "
             f"Best: {best_val_fusion:.4f}\n", 'red')
 
 if config['LOG_WANDB']:
     wandb.finish()
-# %%
+#%%
