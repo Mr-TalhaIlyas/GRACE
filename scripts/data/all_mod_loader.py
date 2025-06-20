@@ -209,7 +209,7 @@ class GEN_DATA_LISTS:
 
 
         
-class SlidingWindowMMELoader(data.Dataset):
+class SlidingWindowAMLoader(data.Dataset): # all modalities loader
     def __init__(self, dataset_dict, config=config, augment=False):
         # file lists
         self.video_paths   = dataset_dict['flow_paths']
@@ -401,7 +401,7 @@ class SlidingWindowMMELoader(data.Dataset):
             'lh':     lh,
             # 'ecg':    ecg_coef.astype(np.float32),
             'eeg':    eeg.astype(np.float32),
-            'ecg_seg': self.seg_scale(ecg_seg),
+            'ecg_seg': ecg_seg,#self.seg_scale(ecg_seg),
             'hrv': hrv,
             'sub_lbls':   sub_lbls,
             'super_lbls': super_lbls,

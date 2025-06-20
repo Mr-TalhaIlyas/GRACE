@@ -3,7 +3,7 @@
 pretrained_root_dir = '/home/user01/Data/npj/scripts/models/pretrained/'
 
 mme = dict(
-            batch_size= 32,
+            batch_size= 1,
 
             num_sub_classes = 5,
             num_sup_classes = 2, # wiht sigmoid activation output

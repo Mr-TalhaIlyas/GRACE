@@ -28,7 +28,7 @@ from in_silo.utils.augs import ExclusiveMixer
 from in_silo.models.dilvit import DILVIT
 from in_silo.models.timemil import TimeMIL
 #%%
-exp_name = 'test' # ecg_bvg_InceptionTime 
+exp_name = 'ecgH_bvs_InceptionTime_fold1' 
 # Define your configuration for wandb
 config = {
     'batch_size_train': 64,#64, 8 
@@ -38,9 +38,10 @@ config = {
     'architecture': 'InceptionTime',
     'dataset': 'ALFRED',
     'data_dir': '/home/user01/Data/npj/datasets/alfred/ts_analysis/',
-    'chkpt_dir': '/home/user01/Data/npj/scripts/ts/chkpt/',
-    'log_dir': '/home/user01/Data/npj/scripts/ts/logs/',
+    'chkpt_dir': '/home/user01/Data/npj/scripts/in_silo/chkpt/',
+    'log_dir': '/home/user01/Data/npj/scripts/in_silo/logs/',
     'exp_typ': 'bvs', # bvp, gvp, bvg None bvs
+    'data_type': 'hrv', # hrv, eeg ecg
     # Add any other parameters you'd like to track
 }
 
@@ -48,9 +49,13 @@ config = {
 # wandb.init(dir=config['log_dir'], project="ALFRED_EEG", name = exp_name, config=config)
 
 # Load your data
-data = joblib.load(f'{config["data_dir"]}Alfred_ecgH_full_w10_o5.joblib')
+# Alfred_ecgH_full_w10_o5 Alfred_ecgH_fold1_w10_o5.joblib
+data = joblib.load(f'{config["data_dir"]}Alfred_ecgH_fold1_w10_o5.joblib')
 
-X_train = data['train_data']#[:,1:2,:]
+if config['data_type'] == 'ecg':
+    X_train = data['train_data'][:,1:2,:]
+else:
+    X_train = data['train_data']
 y_train = data['train_label']
 
 if config['exp_typ'] == 'gvp':
@@ -76,7 +81,10 @@ else:
     pass
 y_train = y_train.astype(np.float16).astype(str)
 
-X_test = data['test_data']#[:,1:2,:]
+if config['data_type'] == 'ecg':
+    X_test = data['test_data'][:,1:2,:]
+else:
+    X_test = data['test_data']
 y_test = data['test_label']
 
 if config['exp_typ'] == 'gvp':
@@ -102,17 +110,18 @@ else:
     pass
 
 #%%
-# use sklearn minmax scaler to scale only the 3rd channel of data only
-from sklearn.preprocessing import MinMaxScaler
-scaler = MinMaxScaler(feature_range=(0, 1))
-for i in range(X_train.shape[0]):
-    ecg = X_train[i, 2, :].reshape(-1, 1)
-    ecg = scaler.fit_transform(ecg)
-    X_train[i, 2, :] = ecg.reshape(-1)
-for i in range(X_test.shape[0]):
-    ecg = X_test[i, 2, :].reshape(-1, 1)
-    ecg = scaler.fit_transform(ecg)
-    X_test[i, 2, :] = ecg.reshape(-1)
+if config['data_type'] == 'hrv':
+    # use sklearn minmax scaler to scale only the 3rd channel of data only
+    from sklearn.preprocessing import MinMaxScaler
+    scaler = MinMaxScaler(feature_range=(0, 1))
+    for i in range(X_train.shape[0]):
+        ecg = X_train[i, 2, :].reshape(-1, 1)
+        ecg = scaler.fit_transform(ecg)
+        X_train[i, 2, :] = ecg.reshape(-1)
+    for i in range(X_test.shape[0]):
+        ecg = X_test[i, 2, :].reshape(-1, 1)
+        ecg = scaler.fit_transform(ecg)
+        X_test[i, 2, :] = ecg.reshape(-1)
 
 #%%
 y_test = y_test.astype(np.float16).astype(str)
@@ -138,7 +147,7 @@ dls.show_batch(sharey=False)
 print('Classes = ', dls.c, 'i.e.,', np.unique(y_train))
 # Initialize your model
 # model = DILVIT(num_classes=dls.c)
-model = InceptionTime(dls.vars, dls.c, fc_dropout=.5, nf=64)
+model = InceptionTime(dls.vars, dls.c, fc_dropout=.5, nf=64, return_features=False)
 # model = TST(dls.vars, dls.c, dls.len, dropout=.3, fc_dropout=.5)
 # model = XCM(dls.vars, dls.c, dls.len, fc_dropout=.5, nf=64)
 # model = ConvTranPlus(dls.vars, dls.c, dls.len, fc_dropout=.5)
@@ -225,15 +234,3 @@ precision = skm.precision_score(test_targets, test_preds, average='weighted')
 accuracy = skm.accuracy_score(test_targets, test_preds)
 print(f'F1: {f1:.4f}, AUROC: {auroc:.4f}, Recall: {recall:.4f}, Precision: {precision:.4f}, Accuracy: {accuracy:.4f}')
 #%%
-# from TSInterpret.InterpretabilityModels.Saliency.TSR import TSR
-# xb, yb = dls.one_batch()
-
-# # model.show_gradcam(eeg, trg)
-
-# eeg = xb[0:1, :, 0:500].to('cpu')
-# trg = yb[0:1].to('cpu')
-# model = model.to('cpu')
-# int_mod=TSR(model, 500, 19, method='GRAD',mode='feat')
-# exp=int_mod.explain(eeg,labels=trg,TSR =True)
-# int_mod.plot(np.array(eeg),exp, figsize=(20,50))
-# %%

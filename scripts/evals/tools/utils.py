@@ -12,7 +12,7 @@ from sklearn.metrics import (
 
 def apply_temporal_smoothing_probs(probabilities, smoothing_window=3):
     """Apply temporal smoothing to 1D probability array"""
-    if len(probabilities) < smoothing_window:
+    if len(probabilities) < smoothing_window or smoothing_window < 1:
         return probabilities
     
     # Use valid mode to avoid edge effects
@@ -50,7 +50,7 @@ def hysteresis_thresholding(probs, high_thresh=0.7, low_thresh=0.3,
     
     """
     Apply hysteresis thresholding to a sequence of binary classification probabilities.
-
+    If high_thresh == low_thresh, performs simple thresholding.
     Args:
         probs (np.ndarray): Array of shape (T, 2), where each row is [p_neg, p_pos] from softmax,
                             or shape (T,) if only positive probabilities are provided.
@@ -75,6 +75,8 @@ def hysteresis_thresholding(probs, high_thresh=0.7, low_thresh=0.3,
         
     n = len(pos_probs)
 
+    if high_thresh == low_thresh:
+        return (pos_probs >= high_thresh).astype(int)
     # Initialize predictions array
     preds = np.zeros(n, dtype=int)
     current_state = initial_state

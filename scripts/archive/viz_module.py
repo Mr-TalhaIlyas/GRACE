@@ -8,6 +8,219 @@ from typing import Dict, List
 import warnings
 warnings.filterwarnings('ignore')
 
+
+def plot_model_comparison_old(
+    ground_truth,
+    model_probs_list,
+    model_names=None,
+    interval_sec=10,
+    time_axis=None,
+    time_unit="seconds",
+    figsize=None,
+    colors=None,
+    threshold=0.5,
+    seizure_color="red",
+    seizure_alpha=0.2,
+    yticks=False,
+    xticks=False,
+    remove_spines=False
+):
+    """
+    Plot ground truth and multiple model probability traces in an ECG‐style layout,
+    scaling the x-axis so that each sample index represents 'interval_sec' seconds,
+    and optionally removing subplot borders ("spines") for a cleaner look.
+
+    Parameters:
+    -----------
+    ground_truth : array‐like of shape (N,)
+        Binary ground‐truth labels (0 = non‐seizure, 1 = seizure) for each time interval.
+    model_probs_list : list of array‐like, each of shape (N,)
+        A list of length M, each entry containing probability outputs (floats in [0,1]) 
+        from one model, aligned with ground_truth.
+    model_names : list of str, optional
+        Names of the M models for labeling each panel. Defaults to ["Model 1", "Model 2", …].
+    interval_sec : float, default=10
+        Duration in seconds represented by each index in ground_truth. The time_axis is
+        computed as index * interval_sec unless a custom time_axis is provided.
+    time_axis : array‐like of shape (N,), optional
+        Explicit time stamps. If None, uses np.arange(N) * interval_sec.
+    time_unit : str, either "seconds" or "minutes", default="seconds"
+        Unit label for the x-axis. If "minutes", computed time_axis is divided by 60.
+    figsize : tuple (width, height), optional
+        Size of the figure in inches. If None, defaults to (12, 1.5*(M+1)).
+    colors : list of color specs, optional
+        List of length M specifying the line color for each model. If None, uses
+        plt.get_cmap("tab10") cycling through up to 10 distinct colors.
+    threshold : float, default=0.5
+        Probability threshold for drawing a horizontal dashed line in each model panel.
+    seizure_color : str or RGB, default="red"
+        Color used to shade seizure periods (where ground_truth==1).
+    seizure_alpha : float, default=0.2
+        Transparency for the seizure shading in the ground‐truth row (0.2) and
+        weaker (0.1) in model rows.
+    yticks : bool, default=False
+        Whether to show y‐axis tick labels on model panels. Usually set to False for clarity.
+    xticks : bool, default=False
+        Whether to show x‐axis tick labels on model panels. Usually set to False for clarity.
+    remove_spines : bool, default=False
+        If True, hide all subplot borders (spines) for a cleaner, minimal look.
+
+    Returns:
+    --------
+    fig : matplotlib.figure.Figure
+        The Figure object containing the multi‐panel ECG‐style plot.
+    """
+    # Validate input lengths
+    N = len(ground_truth)
+    M = len(model_probs_list)
+    assert all(len(probs) == N for probs in model_probs_list), \
+        "All model probability arrays must have the same length as ground_truth."
+    
+    # Compute default time axis if not provided
+    if time_axis is None:
+        base_time = np.arange(N) * interval_sec  # in seconds
+        if time_unit == "minutes":
+            time_axis = base_time / 60.0
+        else:
+            time_axis = base_time.copy()
+    else:
+        assert len(time_axis) == N, "time_axis must have length N."
+        # Assume user-provided time_axis is already in correct units
+    
+    # Decide x-axis label based on unit
+    if time_unit == "minutes":
+        x_label = "Time (minutes)"
+    else:
+        x_label = "Time (seconds)"
+    
+    # Default model names
+    if model_names is None:
+        model_names = [f"Model {i+1}" for i in range(M)]
+    else:
+        assert len(model_names) == M, "model_names must be a list of length M."
+    
+    # Default colors using Matplotlib's tab10 palette
+    if colors is None:
+        cmap = plt.get_cmap("tab10")
+        colors = [cmap(i % 10) for i in range(M)]
+    else:
+        assert len(colors) == M, "colors must be a list of length M."
+    
+    # Default figure size: width=12 inches, height = 1.5*(M+1) inches
+    if figsize is None:
+        fig_width = 12
+        fig_height = 1.3 * (M + 1)
+        figsize = (fig_width, fig_height)
+    
+    # Create figure and GridSpec layout
+    fig = plt.figure(figsize=figsize)
+    gs = GridSpec(nrows=M + 1, ncols=1, height_ratios=[0.5] + [1] * M, hspace=0.05)
+    
+    # Boolean mask for seizure periods
+    gt_mask = np.array(ground_truth, dtype=bool)
+    
+    # -----------------------------
+    # Top Panel: Ground‐Truth Plot
+    # -----------------------------
+    ax0 = fig.add_subplot(gs[0, 0])
+    ax0.fill_between(
+        time_axis,
+        0,
+        1,
+        where=gt_mask,
+        color=seizure_color,
+        alpha=seizure_alpha,
+        step="post"
+    )
+    ax0.set_ylim(-0.1, 1.1)
+    ax0.set_yticks([0, 1] if yticks else [])
+    ax0.set_yticklabels(["Non‐Sz", "Sz"] if yticks else [])
+    ax0.set_xticks([])
+    ax0.set_ylabel("Human\nExpert", fontsize=10, rotation=0, labelpad=50, va="center")
+    ax0.tick_params(axis="both", which="major", labelsize=8)
+    if remove_spines:
+        for spine in ax0.spines.values():
+            spine.set_visible(False)
+    
+    # ------------------------------------------------
+    # Middle Panels: One Row per Model Probability Trace
+    # ------------------------------------------------
+    for i in range(M):
+        axi = fig.add_subplot(gs[i + 1, 0], sharex=ax0)
+        
+        # Plot model probability line
+        axi.plot(
+            time_axis,
+            model_probs_list[i],
+            color=colors[i],
+            linewidth=1.0,
+            label=model_names[i]
+        )
+        
+        # Draw threshold line at y = threshold
+        axi.axhline(
+            y=threshold,
+            color="gray",
+            linestyle="--",
+            linewidth=0.8,
+            alpha=0.7
+        )
+        
+        # Shade seizure regions (weaker alpha)
+        axi.fill_between(
+            time_axis,
+            0,
+            1,
+            where=gt_mask,
+            color=seizure_color,
+            alpha=seizure_alpha / 2,
+            step="post"
+        )
+        
+        axi.set_ylim(0, 1.15)
+        if not yticks:
+            axi.set_yticks([])
+        else:
+            axi.set_yticks([0.01, threshold]) # ,1 
+            axi.set_yticklabels(["Non-Sz", "Sz"]) #, None
+        
+        axi.set_ylabel(
+            model_names[i],
+            fontsize=10,
+            rotation=0,
+            labelpad=45,
+            va="center"
+        )
+        axi.tick_params(axis="both", which="major", labelsize=8)
+        
+        # Hide x‐tick labels for all but the bottom panel
+        if i < M - 1:
+            plt.setp(axi.get_xticklabels(), visible=False)
+        
+        if remove_spines:
+            for spine in axi.spines.values():
+                spine.set_visible(False)
+    
+    # ------------------------
+    # Bottom Panel: X‐Axis with Ticks
+    # ------------------------
+    if xticks:
+        ax_last = fig.axes[-1]
+        ax_last.set_xlabel(x_label, fontsize=12)
+        ax_last.set_xlim(time_axis[0], time_axis[-1])
+        
+        # Use AutoLocator to choose "appropriate" tick intervals
+        ax_last.xaxis.set_major_locator(AutoLocator())
+        ax_last.tick_params(axis="x", which="major", labelsize=8)
+    
+    if remove_spines:
+        for spine in ax_last.spines.values():
+            spine.set_visible(False)
+    
+    # Improve layout
+    plt.tight_layout()
+    return fig
+
 class ClinicalVisualizer:
     """
     Visualization suite for clinical seizure detection evaluation
@@ -443,3 +656,375 @@ def run_complete_clinical_evaluation(file_predictions: Dict, save_dir: str = "cl
     print(f"📋 Clinical metrics saved to {save_dir}/clinical_metrics_summary.csv")
     
     return clinical_metrics
+
+
+
+def plot_metric_with_significance(core_metrics, agreement_metrics, metric_name, 
+                                 fusion_key='fusion_outputs', figsize=(12, 8), 
+                                 title=None, modality_config=modality_config, use_legend=False):
+    """
+    Plots a bar chart of metric values with confidence intervals and significance brackets based on DeLong's test p-values.
+
+    Args:
+        core_metrics (dict): Dictionary containing metric dictionaries (e.g., core_metrics['auroc']).
+        agreement_metrics (dict): Dictionary containing 'delong' results with (Z, p-value) tuples.
+        metric_name (str): Name of the metric to plot (e.g., 'auroc', 'recall', 'precision').
+        fusion_key (str): Key for the fusion model in the dictionaries.
+        figsize (tuple): Figure size (width, height).
+        title (str): Plot title. If None, uses default.
+        modality_config (dict): Configuration dict with modality info.
+        use_legend (bool): If True, use legend instead of x-tick labels for modality names.
+
+    Returns:
+        matplotlib.figure.Figure: The created figure.
+    """
+    
+    # Extract metrics and confidence intervals
+    metrics = core_metrics[metric_name]
+    metrics_CI = core_metrics.get(f'{metric_name}_CI', None)
+    delong_results = agreement_metrics.get('delong', {})
+    
+    # Prepare data
+    modalities = list(metrics.keys())
+    values = [metrics[m] for m in modalities]
+    
+    # Get names and colors
+    names = [modality_config.get(m, {'name': m})['name'] for m in modalities]
+    colors = [modality_config.get(m, {'color': '#333333'})['color'] for m in modalities]
+    
+    # Create edge colors (darker versions)
+    edge_colors = []
+    for color in colors:
+        if color == '#377eb8':  # Fusion color
+            edge_colors.append('navy')
+        else:
+            edge_colors.append('black')
+    
+    # Prepare errors from confidence intervals
+    errors_lower = []
+    errors_upper = []
+    if metrics_CI is not None:
+        for i, m in enumerate(modalities):
+            ci = metrics_CI.get(m, (values[i], values[i]))
+            errors_lower.append(values[i] - ci[0])  # Distance from value to lower CI
+            errors_upper.append(ci[1] - values[i])  # Distance from value to upper CI
+    else:
+        # No CIs available, use small default errors
+        errors_lower = [0.01] * len(values)
+        errors_upper = [0.01] * len(values)
+    
+    errors = [errors_lower, errors_upper]
+
+    # Create the plot
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    # Use numerical x-positions
+    x_positions = range(len(modalities))
+    bars = ax.bar(x_positions, values, yerr=errors, capsize=4,
+                  color=colors, edgecolor=edge_colors, linewidth=1.5, alpha=0.8)
+
+    # Highlight fusion bar
+    fusion_idx = modalities.index(fusion_key)
+    bars[fusion_idx].set_linewidth(2.5)
+    bars[fusion_idx].set_alpha(1.0)
+
+    def add_significance_bracket(ax, x1, x2, y, p_value, height_offset=0.02):
+        """Add significance bracket with stars based on p-value"""
+        if p_value < 0.001:
+            sig_symbol = '***'
+        elif p_value < 0.01:
+            sig_symbol = '**'
+        elif p_value < 0.05:
+            sig_symbol = '*'
+        else:
+            sig_symbol = 'ns'
+        
+        bracket_height = y + height_offset
+        # Draw bracket
+        ax.plot([x1, x1, x2, x2], 
+                [y + height_offset/3, bracket_height, bracket_height, y + height_offset/3], 
+                'k-', linewidth=1.2)
+        
+        # Add significance text
+        ax.text((x1 + x2) / 2, bracket_height + 0.005, sig_symbol, 
+                ha='center', va='bottom', fontsize=11, fontweight='bold')
+
+    # Add significance brackets based on DeLong's test results
+    max_val = max([v + e for v, e in zip(values, errors_upper)])
+    y_start = max_val + 0.02
+    y_increment = 0.03
+    
+    bracket_y = y_start
+    for i, m in enumerate(modalities):
+        if m == fusion_key:
+            continue
+        
+        # Get p-value from delong_results
+        if m in delong_results:
+            z_score, p_val = delong_results[m]
+        else:
+            p_val = 1.0  # Default to non-significant if missing
+        
+        add_significance_bracket(ax, i, fusion_idx, bracket_y, p_val)
+        bracket_y += y_increment
+
+    # Handle x-axis labels and legend based on use_legend parameter
+    if use_legend:
+        # Remove x-tick labels and create legend
+        ax.set_xticks('off')
+        ax.set_xticklabels([f'M{i+1}' for i in range(len(modalities))])  # Simple labels like M1, M2, etc.
+        
+        # Create legend patches
+        legend_patches = []
+        for i, (name, color) in enumerate(zip(names, colors)):
+            # Add special marker for fusion model
+            if i == fusion_idx:
+                legend_patches.append(Patch(facecolor=color, edgecolor='navy', 
+                                          linewidth=2, label=f'{name}*')) 
+            else:
+                legend_patches.append(Patch(facecolor=color, edgecolor='black', 
+                                          linewidth=1, label=name))
+        
+        # Position legend outside the plot area
+        ax.legend(handles=legend_patches, bbox_to_anchor=(1.05, 1), loc='upper left', 
+                 fontsize=10, title='Models', title_fontsize=12)
+        
+    else:
+        # Use traditional x-tick labels
+        ax.set_xticks(x_positions)
+        ax.set_xticklabels(names, rotation=15, ha='right')
+
+    # Styling
+    ylabel = metric_name.upper() if metric_name.lower() in ['auroc', 'auc'] else metric_name.title()
+    ax.set_ylabel(ylabel, fontsize=14, fontweight='bold')
+    
+    # if title is None:
+    #     title = f'Model Performance Comparison: {ylabel} with Statistical Significance\n(DeLong\'s Test)'
+    ax.set_title(title, fontsize=16, fontweight='bold', pad=20)
+    
+    # Set y-axis limits dynamically
+    y_min = min(values) * 0.9
+    y_max = bracket_y + 0.05
+    ax.set_ylim(y_min, y_max)
+    ax.grid(axis='y', alpha=0.3)
+
+    # # Add legend for significance levels
+    # legend_text = "Significance: *** p < 0.001, ** p < 0.01, * p < 0.05, ns = not significant"
+    # if use_legend:
+    #     # Position significance legend at the bottom when using model legend
+    #     ax.text(0.5, -0.1, legend_text, ha='center', va='top', transform=ax.transAxes, 
+    #             fontsize=10, style='italic')
+    # else:
+    #     ax.text(0.5, -0.15, legend_text, ha='center', va='top', transform=ax.transAxes, 
+    #             fontsize=10, style='italic')
+
+    # # Highlight the fusion bar with annotation
+    # fusion_value = values[fusion_idx]
+    # ax.annotate('Best\nPerforming', xy=(fusion_idx, fusion_value + errors_upper[fusion_idx] + 0.01), 
+    #             xytext=(fusion_idx, fusion_value + errors_upper[fusion_idx] + 0.05),
+    #             ha='center', va='bottom', fontweight='bold', fontsize=12,
+    #             arrowprops=dict(arrowstyle='->', color='navy', lw=2))
+    # plt.xticks('off')#rotation=15, ha='right')
+    plt.tight_layout()
+    return fig
+
+
+
+##########################################
+# LEGACY PLOT FUNCTIONS
+########################################## 
+
+def plot_model_comparison_oldv2(
+    ground_truth,
+    model_probs_list,
+    model_names=None,
+    interval_sec=10,
+    time_axis=None,
+    time_unit="auto",
+    figsize=None,
+    colors=None,
+    threshold=0.5,
+    seizure_color="#FF6B6B",  # Softer red
+    seizure_alpha=0.3,
+    yticks=False,
+    remove_spines=True,
+    grid=True,
+    time_format="auto",
+    save_dir=None,
+    filename=None
+):
+    """
+    Plot ground truth and model probabilities in a clean, scalable layout.
+    Features dynamic time formatting, optimized spacing, and enhanced visuals.
+    """
+    # Validate input
+    N = len(ground_truth)
+    M = len(model_probs_list)
+    assert all(len(probs) == N for probs in model_probs_list), \
+        "All model probability arrays must match ground truth length."
+    
+    # Generate time axis if not provided
+    if time_axis is None:
+        base_time = np.arange(N) * interval_sec
+    else:
+        base_time = time_axis.copy()
+        interval_sec = base_time[1] - base_time[0] if len(base_time) > 1 else 1
+
+    # Auto-detect best time unit if requested
+    total_duration = base_time[-1] - base_time[0]
+    if time_unit == "auto":
+        if total_duration >= 3600:
+            time_unit, time_divisor = "hours", 3600
+        elif total_duration >= 120:
+            time_unit, time_divisor = "minutes", 60
+        else:
+            time_unit, time_divisor = "seconds", 1
+    else:
+        time_divisor = 3600 if time_unit == "hours" else 60 if time_unit == "minutes" else 1
+    
+    scaled_time = base_time / time_divisor
+    
+    # Default model names and colors
+    model_names = model_names or [f"Model {i+1}" for i in range(M)]
+    colors = colors or [plt.cm.tab10(i % 10) for i in range(M)]
+    
+    # Dynamic figure sizing
+    row_height = max(0.8, 3 - 0.05 * N)  # Adjust for signal length
+    if figsize is None:
+        fig_width = min(14, 4 + total_duration/1800)  # Scale width with duration
+        fig_height = 0.7 + M * row_height
+        figsize = (fig_width, fig_height)
+    
+    fig = plt.figure(figsize=figsize, dpi=100)
+    gs = GridSpec(M + 1, 1, height_ratios=[0.3] + [row_height] * M, hspace=0.08)
+    
+    # Boolean seizure mask
+    gt_mask = np.array(ground_truth, dtype=bool)
+    
+    # -----------------------------
+    # Ground Truth Panel
+    # -----------------------------
+    ax0 = fig.add_subplot(gs[0, 0])
+    ax0.fill_between(
+        scaled_time,
+        0,
+        1,
+        where=gt_mask,
+        color=seizure_color,
+        alpha=seizure_alpha,
+        step="post",
+        edgecolor='none'
+    )
+    ax0.set_ylim(-0.1, 1.1)
+    ax0.set_yticks([0, 1] if yticks else [])
+    ax0.set_yticklabels(["Non-Seiz", "Seiz"] if yticks else [], fontsize=9)
+    ax0.set_xticks([])
+    ax0.set_ylabel("Human\nExpert", fontsize=10, rotation=0, 
+                  labelpad=30, va='center', ha='right')
+    
+    # -----------------------------
+    # Model Probability Panels
+    # -----------------------------
+    axes = []
+    for i, (probs, name, color) in enumerate(zip(model_probs_list, model_names, colors)):
+        ax = fig.add_subplot(gs[i+1, 0], sharex=ax0)
+        axes.append(ax)
+        
+        # Background seizure regions
+        ax.fill_between(
+            scaled_time,
+            0,
+            1,
+            where=gt_mask,
+            color=seizure_color,
+            alpha=seizure_alpha/2,
+            step="post",
+            zorder=0
+        )
+        
+        # Threshold line
+        ax.axhline(
+            threshold, 
+            color='#7f7f7f', 
+            linestyle=':', 
+            linewidth=0.8, 
+            alpha=0.9,
+            zorder=1
+        )
+        
+        # Probability trace
+        ax.plot(
+            scaled_time, 
+            probs, 
+            color=color,
+            linewidth=1.0,
+            alpha=0.9,
+            zorder=2,
+            label=name
+        )
+        
+        # Formatting
+        ax.set_ylim(-0.05, 1.05)
+        if yticks:
+            ax.set_yticks([0, threshold]) # ,1
+            # ax.set_yticklabels([0, f"{threshold:.1f}", 1], fontsize=8)
+            ax.set_yticklabels(["Non-Seiz", "Seiz"], fontsize=8)
+        else:
+            ax.set_yticks([])
+        
+        ax.set_ylabel(
+            name, 
+            fontsize=10,
+            rotation=0, 
+            labelpad=35, 
+            va='center',
+            ha='right'
+        )
+        
+        # Add grid if requested
+        if grid:
+            ax.grid(axis='y', linestyle=':', linewidth=0.5, alpha=0.4, zorder=0)
+        
+        # Remove top/right spines
+        if remove_spines:
+            ax.spines[['top', 'right']].set_visible(False)
+            if i < M-1:
+                ax.spines['bottom'].set_visible(False)
+    
+    # -----------------------------
+    # X-Axis Formatting
+    # -----------------------------
+    # Smart tick locator
+    max_ticks = 12 if total_duration/time_divisor > 60 else 8
+    axes[-1].xaxis.set_major_locator(MaxNLocator(nbins=max_ticks, min_n_ticks=6))
+    
+    # Auto time formatting
+    if time_format == "auto":
+        if time_unit == "hours":
+            axes[-1].xaxis.set_major_formatter(
+                FuncFormatter(lambda x, _: f'{x:.1f}h' if x >= 1 else f'{x*60:.0f}min')
+            )
+        elif time_unit == "minutes":
+            axes[-1].xaxis.set_major_formatter(
+                FuncFormatter(lambda x, _: f'{x:.0f}min' if x >= 1 else f'{x*60:.0f}s')
+            )
+        else:
+            axes[-1].xaxis.set_major_formatter(
+                FuncFormatter(lambda x, _: f'{x:.0f}s')
+            )
+    
+    # Axis labels
+    time_unit_label = ("hours" if time_unit == "hours" else
+                      "minutes" if time_unit == "minutes" else "seconds")
+    axes[-1].set_xlabel(f"Time ({time_unit_label})", fontsize=10, labelpad=8)
+    axes[-1].tick_params(axis='x', labelsize=9)
+    
+    # Final layout adjustments
+    plt.subplots_adjust(left=0.1, right=0.98, top=0.97, bottom=0.08)
+    
+    if save_dir:
+        if filename is not None:
+            fig.savefig(f"{save_dir}/modality_comparison_{filename}.png", bbox_inches='tight')
+        else:
+            fig.savefig(f"{save_dir}/modality_comparison.png", bbox_inches='tight')
+    return fig

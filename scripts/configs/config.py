@@ -51,7 +51,7 @@ config = dict(
                 num_fold = -1, # -1 for all folds, 0 for fold 0, 1 for fold 1, etc.
 
                 # training settings
-                batch_size= 32,
+                batch_size= 1,
 
                 # learning rate
                 learning_rate= 0.0001, # 0.001

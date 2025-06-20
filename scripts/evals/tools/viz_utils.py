@@ -6,8 +6,11 @@ from matplotlib.ticker import AutoLocator
 import matplotlib.dates as mdates
 from matplotlib.gridspec import GridSpec
 from matplotlib.ticker import MaxNLocator, FuncFormatter
+from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
+import matplotlib.patches as mpatches
 # set figure plotting and saving dpi
-mpl.rcParams['figure.dpi'] = 150
+mpl.rcParams['figure.dpi'] = 600
 mpl.rcParams['savefig.dpi'] = 600
 
 from evals.tools.evaluators import TestTimeEvaluator
@@ -21,59 +24,107 @@ from sklearn.metrics import (
 )
 
 colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
-        
+
+desired_order = [
+        'eeg_outputs_is', 'fusion_outputs', 'ecg_outputs', 'flow_outputs', 
+        'joint_pose_outputs', 'hrv_outputs_is', 'ecg_outputs_is', 
+    ]
+
 modality_config = {
-    'fusion_outputs': {'name': 'Fusion', 'color': '#1f77b4'},
-    'ecg_outputs': {'name': 'ECG', 'color': '#ff7f0e'},
-    'flow_outputs': {'name': 'Optical Flow', 'color': '#2ca02c'},
-    'joint_pose_outputs': {'name': 'Pose', 'color': '#d62728'},
-    'body_outputs': {'name': 'Body', 'color': '#9467bd'},
-    'face_outputs': {'name': 'Face', 'color': '#8c564b'},
-    'rhand_outputs': {'name': 'Right Hand', 'color': '#e377c2'},
-    'lhand_outputs': {'name': 'Left Hand', 'color': '#7f7f7f'}
+    # 🏆 Tier 1: Gold Standard & Equivalent (Bold, professional)
+    'eeg_outputs':     {'name': 'EEG ★', 'color': '#e41a1c'},    # Set1 red
+    'fusion_outputs':  {'name': 'Fusion(▲+●+■)', 'color': '#377eb8'}, # Set1 blue
+
+    # 🎯 Tier 2: Strong Fusion Components (Saturated, confident colors)
+    'ecg_outputs':     {'name': 'CHRVS ▲', 'color': '#4daf4a'},              # Set1 green
+    'flow_outputs':    {'name': 'Flow ●', 'color': '#984ea3'},       # Set1 purple
+    'joint_pose_outputs': {'name': 'Pose ■', 'color': '#ff7f00'},            # Set1 orange
+    'body_outputs':    {'name': 'Body', 'color': '#ffff33'},               # Set1 yellow
+    'face_outputs':    {'name': 'Face', 'color': '#a65628'},               # Set1 brown
+    'rhand_outputs':   {'name': 'Right Hand', 'color': '#f781bf'},         # Set1 pink
+    'lhand_outputs':   {'name': 'Left Hand', 'color': '#999999'},          # Set1 gray
+
+    # 🔸 Tier 3: Inferior In-Silo Models (Reusing colors for consistency)
+    'eeg_outputs_is':  {'name': 'EEG ★', 'color': '#e41a1c'},      # Set1 red (same as EEG)
+    'ecg_outputs_is':  {'name': 'ECG (In-Silo)', 'color': '#999999'},      # Set1 blue
+    'hrv_outputs_is':  {'name': 'CHRVS (In-Silo)', 'color': '#4daf4a'},    # Set1 green
 }
 
-def plot_roc_curves(all_preds, all_probs, all_targets, config=None):
+def plot_roc_curves(all_preds, all_probs, all_targets, core_metrics_auroc_CI, 
+                    smoothing_window=5, config=None, filename=None):
     """
-    Plots ROC curves for each modality in `all_preds` and `all_probs`.
+    Ultra-minimalist modern ROC plot with clean aesthetic, grid lines, and compact CI text.
+    """
+    plt.style.use('default')
+    fig, ax = plt.subplots(figsize=(5, 5), facecolor='white')
     
-    Parameters:
-        all_preds (dict): Dictionary of predictions for each modality.
-        all_probs (dict): Dictionary of probabilities for each modality.
-        all_targets (torch.Tensor): Ground truth labels.
-    """
-    fig = plt.figure(figsize=(5,5))
+    desired_order = [
+        'eeg_outputs_is', 'fusion_outputs', 'ecg_outputs', 'flow_outputs', 
+        'joint_pose_outputs', 'hrv_outputs_is', 'ecg_outputs_is', 
+    ]
+    
+    ordered_keys = [key for key in desired_order if key in all_preds.keys()]
+    remaining_keys = [key for key in all_preds.keys() if key not in ordered_keys]
+    ordered_keys.extend(remaining_keys)
 
-    for modality_key in all_preds.keys():
+    # Ultra-clean plotting
+    for idx, modality_key in enumerate(ordered_keys):
         probs_ap = all_probs[modality_key] 
-        probs_ap = apply_temporal_smoothing_probs(probs_ap, 5) 
+        probs_ap = apply_temporal_smoothing_probs(probs_ap, smoothing_window) 
         fpr, tpr, _ = roc_curve(all_targets, probs_ap)
         roc_auc = auc(fpr, tpr)
+        
+        color = modality_config[modality_key]['color']
+        name = modality_config[modality_key]['name']
+        
+        # Compact label with smaller CI text on same line
+        if modality_key in core_metrics_auroc_CI:
+            lower_ci, upper_ci = core_metrics_auroc_CI[modality_key]
+            label = f'{name} {roc_auc:.3f} [{lower_ci:.3f}–{upper_ci:.3f}]'
+        else:
+            label = f'{name} {roc_auc:.3f}'
 
-        plt.plot(
-            fpr, tpr,
-            color=modality_config[modality_key]['color'],
-            label=f'{modality_config[modality_key]["name"]} (AUC = {roc_auc:.3f})',
-            linewidth=2
-        )
+        # Clean lines with hierarchy
+        linewidth = 3 if idx < 2 else 2  # Emphasis on EEG/Fusion
+        alpha = 1.0 if idx < 5 else 0.7  # De-emphasize in-silo
+        
+        ax.plot(fpr, tpr, color=color, label=label, linewidth=linewidth, alpha=alpha)
 
-    plt.plot([0, 1], [0, 1], 'k--', linewidth=1, alpha=0.5)
-    plt.xlim([0.0, 1.0])
-    plt.ylim([0.0, 1.05])
-    plt.xlabel('False Positive Rate')
-    plt.ylabel('True Positive Rate')
-    plt.title('ROC Curves')
-
-    # Compact legend settings
-    plt.legend(loc='lower right', fontsize='small', frameon=False)
-
-    plt.grid(True, alpha=0.3)
+    # Minimal diagonal
+    ax.plot([0, 1], [0, 1], color='#cccccc', linestyle='--', linewidth=1, alpha=0.8)
+    
+    # Clean axes
+    ax.set_xlim([0, 1])
+    ax.set_ylim([0, 1])
+    ax.set_xlabel('FPR', fontsize=12, color='#333')
+    ax.set_ylabel('TPR', fontsize=12, color='#333')
+    
+    # Add subtle grid lines
+    ax.grid(True, linestyle='--', linewidth=0.5, alpha=0.3, color='#cccccc')
+    ax.set_axisbelow(True)  # Put grid behind the curves
+    
+    # Minimal styling
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['bottom'].set_color('#ddd')
+    ax.spines['left'].set_color('#ddd')
+    ax.tick_params(colors='#666', which='both')
+    
+    # Clean legend with smaller font to accommodate CI text
+    ax.legend(frameon=False, loc='lower right', fontsize=9)
+    
     plt.tight_layout()
     plt.show()
+    
     if config:
         save_dir = config.get('output_dir', '.')
-        fig.savefig(f"{save_dir}/roc_curve.png", bbox_inches='tight')
-    return plt
+        if filename is None:
+            fig.savefig(f"{save_dir}/roc_curve_minimalist.png", bbox_inches='tight')
+        else:
+            fig.savefig(f"{save_dir}/roc_curve_minimalist_{filename}.png", bbox_inches='tight')
+    
+    return fig
+
 
 def plot_ap_curves(all_preds, all_probs, all_targets, config=None):
     """
@@ -167,6 +218,7 @@ def plot_confusion_matrix_grid(all_preds, all_probs, all_targets, normalize='tru
         fig.savefig(f"{save_dir}/cm_grid.png", bbox_inches='tight')
     return plt
 
+
 def plot_model_comparison(
     ground_truth,
     model_probs_list,
@@ -177,8 +229,9 @@ def plot_model_comparison(
     figsize=None,
     colors=None,
     threshold=0.5,
-    seizure_color="#FF6B6B",  # Softer red
+    seizure_color="#FF6B6B",  # Softer red for seizure type 1
     seizure_alpha=0.3,
+    seizure_color2="#4C9F70",  # Different color for seizure type 2 (green)
     yticks=False,
     remove_spines=True,
     grid=True,
@@ -189,6 +242,10 @@ def plot_model_comparison(
     """
     Plot ground truth and model probabilities in a clean, scalable layout.
     Features dynamic time formatting, optimized spacing, and enhanced visuals.
+    Supports two seizure types with different highlight colors.
+    Human annotations shown as square wave for 0 and 1 only.
+    Adds right side y-axis with confidence scale and figure-level label.
+    Legend placed at bottom left of figure.
     """
     # Validate input
     N = len(ground_truth)
@@ -231,26 +288,50 @@ def plot_model_comparison(
     fig = plt.figure(figsize=figsize, dpi=100)
     gs = GridSpec(M + 1, 1, height_ratios=[0.3] + [row_height] * M, hspace=0.08)
     
-    # Boolean seizure mask
-    gt_mask = np.array(ground_truth, dtype=bool)
+    # Boolean seizure masks for two types
+    gt_mask_1 = (ground_truth == 1)  # Seizure type 1
+    gt_mask_2 = (ground_truth == 2)  # Seizure type 2
+    
+    # Create mask for human annotation square wave (0 and 1 only) - both seizure types show as 1
+    gt_human_wave = np.where((ground_truth == 1) | (ground_truth == 2), 1, 0)
     
     # -----------------------------
     # Ground Truth Panel
     # -----------------------------
     ax0 = fig.add_subplot(gs[0, 0])
+    
+    # Plot square wave for human annotations (0 and 1 only)
+    ax0.step(scaled_time, gt_human_wave, where='post', color='black', linewidth=1, alpha=0.8)
+    
+    # Fill seizure type 1 regions
     ax0.fill_between(
         scaled_time,
         0,
         1,
-        where=gt_mask,
+        where=gt_mask_1,
         color=seizure_color,
         alpha=seizure_alpha,
         step="post",
-        edgecolor='none'
+        edgecolor='none',
+        label='Seizure Type 1'
     )
-    ax0.set_ylim(-0.1, 1.1)
+    
+    # Fill seizure type 2 regions
+    ax0.fill_between(
+        scaled_time,
+        0,
+        1,
+        where=gt_mask_2,
+        color=seizure_color2,
+        alpha=seizure_alpha,
+        step="post",
+        edgecolor='none',
+        label='Seizure Type 2'
+    )
+    
+    ax0.set_ylim(-0.1, 1.3)  # Increased upper limit for more white space
     ax0.set_yticks([0, 1] if yticks else [])
-    ax0.set_yticklabels(["Non-Seiz", "Seiz"] if yticks else [], fontsize=9)
+    ax0.set_yticklabels(["Non-Seiz", "Seizure"] if yticks else [], fontsize=9)
     ax0.set_xticks([])
     ax0.set_ylabel("Human\nExpert", fontsize=10, rotation=0, 
                   labelpad=30, va='center', ha='right')
@@ -263,13 +344,25 @@ def plot_model_comparison(
         ax = fig.add_subplot(gs[i+1, 0], sharex=ax0)
         axes.append(ax)
         
-        # Background seizure regions
+        # Background seizure regions for type 1
         ax.fill_between(
             scaled_time,
             0,
             1,
-            where=gt_mask,
+            where=gt_mask_1,
             color=seizure_color,
+            alpha=seizure_alpha/2,
+            step="post",
+            zorder=0
+        )
+        
+        # Background seizure regions for type 2
+        ax.fill_between(
+            scaled_time,
+            0,
+            1,
+            where=gt_mask_2,
+            color=seizure_color2,
             alpha=seizure_alpha/2,
             step="post",
             zorder=0
@@ -299,8 +392,9 @@ def plot_model_comparison(
         # Formatting
         ax.set_ylim(-0.05, 1.05)
         if yticks:
-            ax.set_yticks([0, threshold]) # ,1
-            # ax.set_yticklabels([0, f"{threshold:.1f}", 1], fontsize=8)
+            # ax.set_yticks([0, threshold, 1])
+            # ax.set_yticklabels(["0", f"{threshold:.1f}", "1"], fontsize=8)
+            ax.set_yticks([0, threshold])
             ax.set_yticklabels(["Non-Seiz", "Seiz"], fontsize=8)
         else:
             ax.set_yticks([])
@@ -325,35 +419,62 @@ def plot_model_comparison(
                 ax.spines['bottom'].set_visible(False)
     
     # -----------------------------
+    # Add secondary y-axis on right side for confidence scale
+    # -----------------------------
+    for ax in axes:
+        secax = ax.twinx()
+        secax.set_ylim(ax.get_ylim())
+        secax.set_yticks([0, 0.5, 1])
+        secax.set_yticklabels(['0', '0.5', '1'])
+        secax.tick_params(axis='y', colors='gray', labelsize=8)
+        secax.spines['right'].set_visible(True)
+        secax.spines['right'].set_color('gray')
+        secax.spines['right'].set_linewidth(1)
+    
+    # -----------------------------
     # X-Axis Formatting
     # -----------------------------
-    # Smart tick locator
-    max_ticks = 12 if total_duration/time_divisor > 60 else 8
-    axes[-1].xaxis.set_major_locator(MaxNLocator(nbins=max_ticks, min_n_ticks=6))
+    if len(axes) > 0:
+        max_ticks = 12 if total_duration/time_divisor > 60 else 8
+        axes[-1].xaxis.set_major_locator(MaxNLocator(nbins=max_ticks, min_n_ticks=6))
+        
+        if time_format == "auto":
+            if time_unit == "hours":
+                axes[-1].xaxis.set_major_formatter(
+                    FuncFormatter(lambda x, _: f'{x:.1f}h' if x >= 1 else f'{x*60:.0f}min')
+                )
+            elif time_unit == "minutes":
+                axes[-1].xaxis.set_major_formatter(
+                    FuncFormatter(lambda x, _: f'{x:.0f}min' if x >= 1 else f'{x*60:.0f}s')
+                )
+            else:
+                axes[-1].xaxis.set_major_formatter(
+                    FuncFormatter(lambda x, _: f'{x:.0f}s')
+                )
+        
+        time_unit_label = ("hours" if time_unit == "hours" else
+                          "minutes" if time_unit == "minutes" else "seconds")
+        axes[-1].set_xlabel(f"Time ({time_unit_label})", fontsize=10, labelpad=8)
+        axes[-1].tick_params(axis='x', labelsize=9)
     
-    # Auto time formatting
-    if time_format == "auto":
-        if time_unit == "hours":
-            axes[-1].xaxis.set_major_formatter(
-                FuncFormatter(lambda x, _: f'{x:.1f}h' if x >= 1 else f'{x*60:.0f}min')
-            )
-        elif time_unit == "minutes":
-            axes[-1].xaxis.set_major_formatter(
-                FuncFormatter(lambda x, _: f'{x:.0f}min' if x >= 1 else f'{x*60:.0f}s')
-            )
-        else:
-            axes[-1].xaxis.set_major_formatter(
-                FuncFormatter(lambda x, _: f'{x:.0f}s')
-            )
+    # -----------------------------
+    # Add figure-level label for right side secondary y-axis
+    # -----------------------------
+    fig.text(0.98, 0.5, 'Seizure Confidence', va='center', rotation=270, fontsize=12, )# fontweight='bold'
     
-    # Axis labels
-    time_unit_label = ("hours" if time_unit == "hours" else
-                      "minutes" if time_unit == "minutes" else "seconds")
-    axes[-1].set_xlabel(f"Time ({time_unit_label})", fontsize=10, labelpad=8)
-    axes[-1].tick_params(axis='x', labelsize=9)
+    # -----------------------------
+    # Add legend at bottom left of figure
+    # -----------------------------
+    if np.any(gt_mask_1) and np.any(gt_mask_2):
+        legend_elements = [
+            mpatches.Rectangle((0,0),1,1, facecolor=seizure_color, alpha=seizure_alpha, label='TCS'),
+            mpatches.Rectangle((0,0),1,1, facecolor=seizure_color2, alpha=seizure_alpha, label='PNES')
+        ]
+        fig.legend(handles=legend_elements, loc='lower left', bbox_to_anchor=(-0.03, 0.03),
+                   fontsize=8, framealpha=0.8, frameon=True)
     
-    # Final layout adjustments
-    plt.subplots_adjust(left=0.1, right=0.98, top=0.97, bottom=0.08)
+    # Final layout adjustments - make room for right y-axis label and bottom legend
+    plt.subplots_adjust(left=0.1, right=0.94, top=0.97, bottom=0.12)
     
     if save_dir:
         if filename is not None:
@@ -362,275 +483,3 @@ def plot_model_comparison(
             fig.savefig(f"{save_dir}/modality_comparison.png", bbox_inches='tight')
     return fig
 
-def draw_temporal_seizure_plots(all_targets, probs_list, labels_list,
-                                eval_config, threshold=0.7, filename=None):
-
-    fig = plot_model_comparison(
-        ground_truth=all_targets,
-        model_probs_list=probs_list,
-        model_names=labels_list,
-        interval_sec=10,
-        time_unit="auto",
-        figsize=None,
-        colors=None,#["tab:blue", "tab:green", "tab:orange", "tab:cyan"],
-        threshold=threshold,
-        seizure_color="red",
-        seizure_alpha=0.2,
-        yticks=True,
-        grid=True,
-        time_format="auto",
-        remove_spines=True,
-        save_dir=eval_config['output_dir'],
-        filename=filename
-    )
-    return fig
-# r = all_probs['fusion_outputs']
-# fusion = apply_temporal_smoothing_probs(r, 5)
-# processed = hysteresis_thresholding(fusion, 0.6, 0.4, only_pos_probs=True)
-
-# p = all_probs['ecg_outputs']
-# ecg = apply_temporal_smoothing_probs(p, 3)
-
-# p = all_probs['flow_outputs']
-# flow = apply_temporal_smoothing_probs(p, 3)
-
-# p = all_probs['joint_pose_outputs']
-# pose = apply_temporal_smoothing_probs(p, 3)
-
-# p=all_probs['fusion_outputs']
-# probs_conf = apply_temporal_smoothing_probs(p, 5)
-# test = hysteresis_thresholding(probs_conf, 0.8, 0.5, only_pos_probs=True)
-
-# fig = plot_model_comparison(
-#     ground_truth=all_targets,
-#     model_probs_list=[fusion,test , ecg,flow,pose],
-#     model_names=['Fusion', 'Test', 'ECG','Flow', 'Pose'],
-#     interval_sec=10,
-#     time_unit="auto",
-#     figsize=None,
-#     colors=None,#["tab:blue", "tab:green", "tab:orange", "tab:cyan"],
-#     threshold=0.7,
-#     seizure_color="red",
-#     seizure_alpha=0.2,
-#     yticks=True,
-#     grid=True,
-#     time_format="auto",
-#     remove_spines=True,
-#     save_dir=eval_config['output_dir'],
-# )
-
-################################################
-# Legacy function for backward compatibility
-################################################
-
-def plot_model_comparison_old(
-    ground_truth,
-    model_probs_list,
-    model_names=None,
-    interval_sec=10,
-    time_axis=None,
-    time_unit="seconds",
-    figsize=None,
-    colors=None,
-    threshold=0.5,
-    seizure_color="red",
-    seizure_alpha=0.2,
-    yticks=False,
-    xticks=False,
-    remove_spines=False
-):
-    """
-    Plot ground truth and multiple model probability traces in an ECG‐style layout,
-    scaling the x-axis so that each sample index represents 'interval_sec' seconds,
-    and optionally removing subplot borders ("spines") for a cleaner look.
-
-    Parameters:
-    -----------
-    ground_truth : array‐like of shape (N,)
-        Binary ground‐truth labels (0 = non‐seizure, 1 = seizure) for each time interval.
-    model_probs_list : list of array‐like, each of shape (N,)
-        A list of length M, each entry containing probability outputs (floats in [0,1]) 
-        from one model, aligned with ground_truth.
-    model_names : list of str, optional
-        Names of the M models for labeling each panel. Defaults to ["Model 1", "Model 2", …].
-    interval_sec : float, default=10
-        Duration in seconds represented by each index in ground_truth. The time_axis is
-        computed as index * interval_sec unless a custom time_axis is provided.
-    time_axis : array‐like of shape (N,), optional
-        Explicit time stamps. If None, uses np.arange(N) * interval_sec.
-    time_unit : str, either "seconds" or "minutes", default="seconds"
-        Unit label for the x-axis. If "minutes", computed time_axis is divided by 60.
-    figsize : tuple (width, height), optional
-        Size of the figure in inches. If None, defaults to (12, 1.5*(M+1)).
-    colors : list of color specs, optional
-        List of length M specifying the line color for each model. If None, uses
-        plt.get_cmap("tab10") cycling through up to 10 distinct colors.
-    threshold : float, default=0.5
-        Probability threshold for drawing a horizontal dashed line in each model panel.
-    seizure_color : str or RGB, default="red"
-        Color used to shade seizure periods (where ground_truth==1).
-    seizure_alpha : float, default=0.2
-        Transparency for the seizure shading in the ground‐truth row (0.2) and
-        weaker (0.1) in model rows.
-    yticks : bool, default=False
-        Whether to show y‐axis tick labels on model panels. Usually set to False for clarity.
-    xticks : bool, default=False
-        Whether to show x‐axis tick labels on model panels. Usually set to False for clarity.
-    remove_spines : bool, default=False
-        If True, hide all subplot borders (spines) for a cleaner, minimal look.
-
-    Returns:
-    --------
-    fig : matplotlib.figure.Figure
-        The Figure object containing the multi‐panel ECG‐style plot.
-    """
-    # Validate input lengths
-    N = len(ground_truth)
-    M = len(model_probs_list)
-    assert all(len(probs) == N for probs in model_probs_list), \
-        "All model probability arrays must have the same length as ground_truth."
-    
-    # Compute default time axis if not provided
-    if time_axis is None:
-        base_time = np.arange(N) * interval_sec  # in seconds
-        if time_unit == "minutes":
-            time_axis = base_time / 60.0
-        else:
-            time_axis = base_time.copy()
-    else:
-        assert len(time_axis) == N, "time_axis must have length N."
-        # Assume user-provided time_axis is already in correct units
-    
-    # Decide x-axis label based on unit
-    if time_unit == "minutes":
-        x_label = "Time (minutes)"
-    else:
-        x_label = "Time (seconds)"
-    
-    # Default model names
-    if model_names is None:
-        model_names = [f"Model {i+1}" for i in range(M)]
-    else:
-        assert len(model_names) == M, "model_names must be a list of length M."
-    
-    # Default colors using Matplotlib's tab10 palette
-    if colors is None:
-        cmap = plt.get_cmap("tab10")
-        colors = [cmap(i % 10) for i in range(M)]
-    else:
-        assert len(colors) == M, "colors must be a list of length M."
-    
-    # Default figure size: width=12 inches, height = 1.5*(M+1) inches
-    if figsize is None:
-        fig_width = 12
-        fig_height = 1.3 * (M + 1)
-        figsize = (fig_width, fig_height)
-    
-    # Create figure and GridSpec layout
-    fig = plt.figure(figsize=figsize)
-    gs = GridSpec(nrows=M + 1, ncols=1, height_ratios=[0.5] + [1] * M, hspace=0.05)
-    
-    # Boolean mask for seizure periods
-    gt_mask = np.array(ground_truth, dtype=bool)
-    
-    # -----------------------------
-    # Top Panel: Ground‐Truth Plot
-    # -----------------------------
-    ax0 = fig.add_subplot(gs[0, 0])
-    ax0.fill_between(
-        time_axis,
-        0,
-        1,
-        where=gt_mask,
-        color=seizure_color,
-        alpha=seizure_alpha,
-        step="post"
-    )
-    ax0.set_ylim(-0.1, 1.1)
-    ax0.set_yticks([0, 1] if yticks else [])
-    ax0.set_yticklabels(["Non‐Sz", "Sz"] if yticks else [])
-    ax0.set_xticks([])
-    ax0.set_ylabel("Human\nExpert", fontsize=10, rotation=0, labelpad=50, va="center")
-    ax0.tick_params(axis="both", which="major", labelsize=8)
-    if remove_spines:
-        for spine in ax0.spines.values():
-            spine.set_visible(False)
-    
-    # ------------------------------------------------
-    # Middle Panels: One Row per Model Probability Trace
-    # ------------------------------------------------
-    for i in range(M):
-        axi = fig.add_subplot(gs[i + 1, 0], sharex=ax0)
-        
-        # Plot model probability line
-        axi.plot(
-            time_axis,
-            model_probs_list[i],
-            color=colors[i],
-            linewidth=1.0,
-            label=model_names[i]
-        )
-        
-        # Draw threshold line at y = threshold
-        axi.axhline(
-            y=threshold,
-            color="gray",
-            linestyle="--",
-            linewidth=0.8,
-            alpha=0.7
-        )
-        
-        # Shade seizure regions (weaker alpha)
-        axi.fill_between(
-            time_axis,
-            0,
-            1,
-            where=gt_mask,
-            color=seizure_color,
-            alpha=seizure_alpha / 2,
-            step="post"
-        )
-        
-        axi.set_ylim(0, 1.15)
-        if not yticks:
-            axi.set_yticks([])
-        else:
-            axi.set_yticks([0.01, threshold]) # ,1 
-            axi.set_yticklabels(["Non-Sz", "Sz"]) #, None
-        
-        axi.set_ylabel(
-            model_names[i],
-            fontsize=10,
-            rotation=0,
-            labelpad=45,
-            va="center"
-        )
-        axi.tick_params(axis="both", which="major", labelsize=8)
-        
-        # Hide x‐tick labels for all but the bottom panel
-        if i < M - 1:
-            plt.setp(axi.get_xticklabels(), visible=False)
-        
-        if remove_spines:
-            for spine in axi.spines.values():
-                spine.set_visible(False)
-    
-    # ------------------------
-    # Bottom Panel: X‐Axis with Ticks
-    # ------------------------
-    if xticks:
-        ax_last = fig.axes[-1]
-        ax_last.set_xlabel(x_label, fontsize=12)
-        ax_last.set_xlim(time_axis[0], time_axis[-1])
-        
-        # Use AutoLocator to choose "appropriate" tick intervals
-        ax_last.xaxis.set_major_locator(AutoLocator())
-        ax_last.tick_params(axis="x", which="major", labelsize=8)
-    
-    if remove_spines:
-        for spine in ax_last.spines.values():
-            spine.set_visible(False)
-    
-    # Improve layout
-    plt.tight_layout()
-    return fig

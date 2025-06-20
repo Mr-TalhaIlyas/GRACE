@@ -126,12 +126,14 @@ class TestTimeModalityEvaluator:
         all_targets = []
 
         with torch.no_grad():
-            pbar = tqdm(loader, desc="ECG Test-time evaluation", unit="batch")
+            pbar = tqdm(loader, desc="Single-Mod. Test-time evaluation", unit="batch")
             for batch in pbar:
                 # ---------------------------------------------------------
-                # 1. Preprocess ECG input only
+                # 1. Preprocess ECGH and EEG input only
                 # ---------------------------------------------------------
                 hrv = batch[self.modality_name].to(torch.float).to(self.device, non_blocking=True)
+                if self.modality_name == "ecg_seg":
+                    hrv = hrv.unsqueeze(1)  # Add channel dimension [batch_size, 1, seq_len]
                 # if targets are single dimension, convert to long
                 if batch["super_lbls"].ndim == 1:
                     targets = batch["super_lbls"].long().to(self.device, non_blocking=True)
