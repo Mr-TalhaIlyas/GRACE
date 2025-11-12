@@ -180,27 +180,6 @@ This will compute:
 
 ---
 
-## 🏗️ Model Architectures
-
-### Multimodal Fusion Models
-
-- **GTN (Graph Transformer Network)** - `scripts/models/gtn.py`
-- **MFI (Multimodal Feature Integration)** - `scripts/models/mfi.py`
-- **Fusion Module** - `scripts/models/fusion.py`
-
-### Single-Modality Models
-
-**Video:**
-- SlowFast - `scripts/models/slowfast.py`
-- Vision Transformer (ViT) - `scripts/models/vit.py`
-- CTR-GCN - `scripts/models/ctrgcn.py`
-
-**ECG:**
-- Inception Time - `scripts/models/incep_time.py`
-- EWT (Empirical Wavelet Transform) - `scripts/models/ewt.py`
-
----
-
 ## 🗂️ Datasets
 
 ### Supported Datasets
@@ -263,25 +242,6 @@ All validation datasets achieved:
 
 ---
 
-## 🔧 Baseline Models
-
-We provide implementations of several baseline methods:
-
-### ECG-based Baselines
-- **Res1DCNN** - `scripts/baselines/res1dcnn/`
-- **OCSVM** - `scripts/baselines/ocsvm/`
-
-### Video-based Baselines
-- **David et al.** - LSTM + Optical Flow - `scripts/baselines/david/`
-- **Hou et al.** - AGCN + Pose - `scripts/baselines/hou/`
-- **VSViG** - Video Seizure ViG - `scripts/baselines/vsvig/`
-- **Gesture Recognition** - `scripts/baselines/gestures/`
-
-Run baselines:
-```bash
-cd scripts/baselines/<baseline_name>
-python main.py
-```
 
 ---
 
@@ -346,11 +306,8 @@ print(results.summary())
 If you use this code or our methodology in your research, please cite:
 
 ```bibtex
-@article{grace2025,
-  title={Privacy-centric Multimodal Combination of Video and ECG Achieve EEG-level Performance for Seizure Detection and Differentiation},
-  author={[Authors]},
-  journal={[Journal]},
-  year={2025}
+@article{GRACE,
+PAPER IS CURRENTLY UNDER REVIEW
 }
 ```
 
@@ -445,3 +402,4 @@ If you find this project helpful, please consider giving it a ⭐ on GitHub!
 ---
 
 **Made with ❤️ for advancing epilepsy care through AI**
+
