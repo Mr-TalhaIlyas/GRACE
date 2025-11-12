@@ -11,6 +11,9 @@
 
 > **Privacy-centric Multimodal Combination of Video and ECG Achieve EEG-level Performance for Seizure Detection and Differentiation**
 
+<p align="center">
+  <img src="https://github.com/Mr-TalhaIlyas/GRACE/blob/main/imgs/themev3.png" alt="Theme screenshot" width="500">
+</p>
 ### Key Highlights
 
 - 🎯 **96.2% sensitivity** (95% CI: 92.4–98.1) for seizure detection
@@ -37,7 +40,9 @@ Our model was developed on synchronized video-ECG data from an Australian cohort
 - **TUH (USA)**: 228 seizures
 
 All validation sets demonstrated robust generalizability with sensitivity/specificity >90% (p<0.001 compared to in-silo single modality baselines).
-
+<p align="center">
+  <img src="https://github.com/Mr-TalhaIlyas/GRACE/blob/main/imgs/GRACE_overview4.png" alt="framework" width="500">
+</p>
 ---
 
 ## 🚀 Quick Start
@@ -402,4 +407,5 @@ If you find this project helpful, please consider giving it a ⭐ on GitHub!
 ---
 
 **Made with ❤️ for advancing epilepsy care through AI**
+
 
