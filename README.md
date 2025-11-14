@@ -4,7 +4,7 @@
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-ee4c2c.svg)](https://pytorch.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Docker](https://img.shields.io/badge/Docker-Available-2496ED.svg)](https://hub.docker.com/)
-
+![Badge](https://hitscounter.dev/api/hit?url=https%3A%2F%2Fgithub.com%2FMr-TalhaIlyas%2FGRACE&label=Hits&icon=github&color=%23198754&message=&style=flat&tz=UTC)
 ## 📋 Overview
 
 **GRACE** is a privacy-centric multimodal framework for seizure detection and differentiation that combines video and ECG signals to achieve EEG-level performance. This repository contains the official PyTorch implementation of the paper:
@@ -407,5 +407,6 @@ If you find this project helpful, please consider giving it a ⭐ on GitHub!
 ---
 
 **Made with ❤️ for advancing epilepsy care through AI**
+
 
 
